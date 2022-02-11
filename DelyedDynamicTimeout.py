@@ -56,10 +56,10 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
             #print details of flows
             self.fields['time'] = datetime.utcnow().strftime('%s')
             self.fields['datapath'] = ev.msg.datapath.id
-            self.fields['in-port'] = stat.match['in_port']
+            self.fields['in_port'] = stat.match['in_port']
             self.fields['eth_src'] = stat.match['eth_src']
             self.fields['eth_dst'] = stat.match['eth_dst']
-            self.fields['out-port'] = stat.instructions[0].actions[0].port
+            self.fields['out_port'] = stat.instructions[0].actions[0].port
             self.fields['total_packets'] = stat.packet_count
             self.fields['total_bytes'] = stat.byte_count
 
