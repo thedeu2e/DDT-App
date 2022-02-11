@@ -56,6 +56,8 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
             #print details of flows
             self.fields['time'] = datetime.utcnow().strftime('%s')
             self.fields['datapath'] = ev.msg.datapath.id
+            self.fields['duration_sec'] = stat.match['duration_sec']
+            self.fields['idle_timeout'] = stat.match['idle_timeout']
             self.fields['in_port'] = stat.match['in_port']
             self.fields['eth_src'] = stat.match['eth_src']
             self.fields['eth_dst'] = stat.match['eth_dst']
