@@ -12,6 +12,9 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
     def __init__(self, *args, **kwargs):
         super(SimpleMonitor13, self).__init__(*args, **kwargs)
         self.datapaths = {}
+        self.state = {}
+        self.unrolled_state = []
+        self.input_state = []
         self.monitor_thread = hub.spawn(self._monitor)
         self.fields = {'time':'','datapath':'','in-port':'','eth_src':'','eth_dst':'','out-port':'','total_packets':0,'total_bytes':0}
 
