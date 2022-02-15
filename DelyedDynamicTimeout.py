@@ -16,7 +16,7 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
         self.unrolled_state = []
         self.input_state = []
         self.monitor_thread = hub.spawn(self._monitor)
-        self.fields = {'time':'','datapath':'','in-port':'','eth_src':'','eth_dst':'','out-port':'','total_packets':0,'total_bytes':0}
+        self.fields = {'time':'','datapath':'','duration_sec':'','idle_timeout':'','in-port':'','eth_src':'','eth_dst':'','out-port':'','total_packets':0,'total_bytes':0}
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -32,7 +32,7 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
                 del self.datapaths[datapath.id]
 
     def _monitor(self):
-        self.logger.info('time\tdatapath\tin-port\teth-src\teth-dst\tout-port\ttotal_packets\ttotal_bytes')
+        self.logger.info('time\tdatapath\tduration-sec\tidle-timeout\tin-port\teth-src\teth-dst\tout-port\ttotal_packets\ttotal_bytes')
         while True:
             for dp in self.datapaths.values():
                 self._request_stats(dp)
@@ -68,4 +68,4 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
             self.fields['total_packets'] = stat.packet_count
             self.fields['total_bytes'] = stat.byte_count
 
-            self.logger.info('data\t%s\t%x\t%x\t%s\t%s\t%x\t%d\t%d',self.fields['time'],self.fields['datapath'],self.fields['in-port'],self.fields['eth_src'],self.fields['eth_dst'],self.fields['out-port'],self.fields['total_packets'],self.fields['total_bytes'])
+            self.logger.info('data\t%s\t%x\t%s\t%s\t%x\t%s\t%s\t%x\t%d\t%d',self.fields['time'],self.fields['datapath'],self.fields['duration_sec'],self.fields['idle_timeout'],self.fields['in-port'],self.fields['eth_src'],self.fields['eth_dst'],self.fields['out-port'],self.fields['total_packets'],self.fields['total_bytes'])
