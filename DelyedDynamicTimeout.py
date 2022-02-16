@@ -68,4 +68,4 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
             self.fields['total_packets'] = stat.packet_count
             self.fields['total_bytes'] = stat.byte_count
 
-            self.logger.info('data\t%s\t%x\t%s\t%s\t%x\t%s\t%s\t%x\t%d\t%d',self.fields['time'],self.fields['datapath'],self.fields['duration_sec'],self.fields['idle_timeout'],self.fields['in-port'],self.fields['eth_src'],self.fields['eth_dst'],self.fields['out-port'],self.fields['total_packets'],self.fields['total_bytes'])
+            self.logger.info('data\t%s\t%x\t%d\t%d\t%x\t%s\t%s\t%x\t%d\t%d',self.fields['time'],self.fields['datapath'],self.fields['duration_sec'],self.fields['idle_timeout'],self.fields['in-port'],self.fields['eth_src'],self.fields['eth_dst'],self.fields['out-port'],self.fields['total_packets'],self.fields['total_bytes'])
