@@ -1,5 +1,6 @@
 # RL-Ryu-App
-This repository is centered around creating an easily undrestandable, customizable SDN testing environment to facilitate research utlizing reinforcement learning for autonomous applications in software defined networks.
+This repository is centered around creating an easily undrestandable, customizable Ryu Controller application for SDN to facilitate research utlizing reinforcement learning for autonomous applications in software defined networks.
+
 ## Getting Started
 Clone the repository
 ```
