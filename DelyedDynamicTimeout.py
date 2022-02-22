@@ -9,8 +9,8 @@ from ryu.lib import hub
 sys.path.insert(0, './TD3')
 sys.path.insert(0, './utils')
 
-from TD3 import ActorNetwork as Actor 
-from TD3 import CriticNetwork as Critic 
+from TD3 import Actor as Actor 
+from TD3 import Critic as Critic 
 from utils import ReplayBuffer as Memory
 
 class SimpleMonitor(simple_switch.SimpleSwitch):
