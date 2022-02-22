@@ -6,6 +6,12 @@ from ryu.controller.handler import MAIN_DISPATCHER, DEAD_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.lib import hub
 
+sys.path.insert(0, './TD3')
+sys.path.insert(0, './utils')
+
+from TD3 import ActorNetwork as Actor 
+from TD3 import CriticNetwork as Critic 
+from utils import ReplayBuffer as Memory
 
 class SimpleMonitor(simple_switch.SimpleSwitch):
 
@@ -37,6 +43,13 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
             for dp in self.datapaths.values():
                 self._request_stats(dp)
             hub.sleep(1)
+            
+    def get_state(self):
+        for dp in self.datapaths.values():
+            self.send_flow_stats_request(dp)
+        hub.sleep(5) #TODO sleep
+        self.format_state()  # TODO
+        self.calculate_reward()
 
     def _request_stats(self, datapath):
         self.logger.debug('send stats request: %016x', datapath.id)
