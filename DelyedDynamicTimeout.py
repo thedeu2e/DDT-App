@@ -16,7 +16,6 @@ from utils import ReplayBuffer as Memory
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--mode', default='train', type=str) # mode = 'train' or 'test'
-parser.add_argument("--env_name", default="Pendulum-v0")  # OpenAI gym environment name， BipedalWalker-v2
 parser.add_argument('--tau',  default=0.005, type=float) # target smoothing coefficient
 parser.add_argument('--target_update_interval', default=1, type=int)
 parser.add_argument('--iteration', default=5, type=int)
