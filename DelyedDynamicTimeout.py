@@ -72,7 +72,7 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
         while True:
             for dp in self.datapaths.values():
                 self._request_stats(dp)
-            hub.sleep(1)
+            hub.sleep(5)
             
     def get_state(self):
         for dp in self.datapaths.values():
