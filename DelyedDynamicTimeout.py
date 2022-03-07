@@ -47,11 +47,13 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
 
     def __init__(self, *args, **kwargs):
         super(SimpleMonitor13, self).__init__(*args, **kwargs)
+        self.monitor_thread = hub.spawn(self._monitor)
+            
         self.datapaths = {}
         self.state = {}
         self.unrolled_state = []
         self.input_state = []
-        self.monitor_thread = hub.spawn(self._monitor)
+       
         self.fields = {'time':'','datapath':'','duration_sec':'','idle_timeout':'','in-port':'','eth_src':'','eth_dst':'','out-port':'','total_packets':0,'total_bytes':0}
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
@@ -61,6 +63,7 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
         if ev.state == MAIN_DISPATCHER:
             if datapath.id not in self.datapaths:
                 self.logger.debug('register datapath: %016x', datapath.id)
+                self.state[datapath.id] = []
                 self.datapaths[datapath.id] = datapath
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
