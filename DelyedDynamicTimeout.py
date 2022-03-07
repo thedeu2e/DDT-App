@@ -44,6 +44,7 @@ parser.add_argument('--print_log', default=5, type=int)
 args = parser.parse_args()
 
 class SimpleMonitor(simple_switch.SimpleSwitch):
+    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
         super(SimpleMonitor13, self).__init__(*args, **kwargs)
@@ -53,8 +54,17 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
         self.state = {}
         self.unrolled_state = []
         self.input_state = []
+        
+        
+        self.flow_packet_count = {}
+        
+        # to calculate deltas for bandwith usage calculation
+        self.flow_byte_counts = {}
+        
+        # to calculate deltas for bandwith usage calculation
+        self.port_byte_counts = {}
        
-        self.fields = {'time':'','datapath':'','duration_sec':'','idle_timeout':'','in-port':'','eth_src':'','eth_dst':'','out-port':'','total_packets':0,'total_bytes':0}
+        self.fields = {'time':'','datapath':'','in-port':'','eth_src':'','eth_dst':'','out-port':'','total_packets':0,'total_bytes':0}
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -65,13 +75,14 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
                 self.logger.debug('register datapath: %016x', datapath.id)
                 self.state[datapath.id] = []
                 self.datapaths[datapath.id] = datapath
+                
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
                 self.logger.debug('unregister datapath: %016x', datapath.id)
                 del self.datapaths[datapath.id]
 
     def _monitor(self):
-        self.logger.info('time\tdatapath\tduration-sec\tidle-timeout\tin-port\teth-src\teth-dst\tout-port\ttotal_packets\ttotal_bytes')
+        self.logger.info('time\tdatapath\tin-port\teth-src\teth-dst\tout-port\ttotal_packets\ttotal_bytes')
         while True:
             for dp in self.datapaths.values():
                 self._request_stats(dp)
@@ -80,9 +91,14 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
     def get_state(self):
         for dp in self.datapaths.values():
             self.send_flow_stats_request(dp)
-        hub.sleep(5) #TODO sleep
+        hub.sleep(2 ) #TODO sleep
         self.format_state()  # TODO
         self.calculate_reward()
+        
+    # Convert from data to bitrate(Kbps)
+    @staticmethod
+    def bitrate(self,data):
+        return round(float(data * 8.0 / (self.interval*1000)),2) 
 
     def _request_stats(self, datapath):
         self.logger.debug('send stats request: %016x', datapath.id)
@@ -110,13 +126,41 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
             #print details of flows
             self.fields['time'] = datetime.utcnow().strftime('%s')
             self.fields['datapath'] = ev.msg.datapath.id
-            self.fields['duration_sec'] = stat.match['duration_sec']
-            self.fields['idle_timeout'] = stat.match['idle_timeout']
             self.fields['in_port'] = stat.match['in_port']
             self.fields['eth_src'] = stat.match['eth_src']
             self.fields['eth_dst'] = stat.match['eth_dst']
             self.fields['out_port'] = stat.instructions[0].actions[0].port
-            self.fields['total_packets'] = stat.packet_count
-            self.fields['total_bytes'] = stat.byte_count
+            
+            # Check if we have a previous reading for this flow
+            # Calculate packet increase over the last polling interval
+            key = (self.fields['datapath'], self.fields['in_port'], self.fields['eth_src'], self.fields['eth_dst'], self.fields['out_port'])
+            if key in self.flow_packet_count:
+                pcount = self.flow_packet_count[key]
+                difference = (stat.packet_count - pcount)
+            self.flow_packet_count[key] = stat.packet_count
+            
+            #Calculate bandwith usage over the last polling interval
+            rate = 0
+            if key in self.flow_byte_counts:
+                bcount = self.flow_byte_counts[key]
+                rate = self.bitrate(self,stat.byte_count - bcount)
+            self.flow_byte_counts[key] = stat.byte_count
 
-            self.logger.info('data\t%s\t%x\t%d\t%d\t%x\t%s\t%s\t%x\t%d\t%d',self.fields['time'],self.fields['datapath'],self.fields['duration_sec'],self.fields['idle_timeout'],self.fields['in-port'],self.fields['eth_src'],self.fields['eth_dst'],self.fields['out-port'],self.fields['total_packets'],self.fields['total_bytes'])
+            self.logger.info('data\t%s\t%x\t%x\t%s\t%s\t%x\t%d\t%d',self.fields['time'],self.fields['datapath'],self.fields['duration_sec'],self.fields['idle_timeout'],self.fields['in-port'],self.fields['eth_src'],self.fields['eth_dst'],self.fields['out-port'],self.fields['total_packets'],self.fields['total_bytes'])
+            
+    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
+    def _port_stats_reply_handler(self, ev):
+        body = ev.msg.body
+        for stat in sorted(body, key=attrgetter('port_no')):
+             if stat.port_no != ofproto_v1_3.OFPP_LOCAL:
+                key = (ev.msg.datapath.id, stat.port_no)
+                rx_bitrate, tx_bitrate = 0, 0
+                total_Kbps=0
+                if key in self.port_byte_counts:
+                    cnt1, cnt2 = self.port_byte_counts[key]
+                    rx_bitrate = self.bitrate(self,stat.rx_bytes - cnt1)
+                    tx_bitrate = self.bitrate(self,stat.tx_bytes - cnt2)
+                    total_Kbps= rx_bitrate + tx_bitrate
+                self.port_byte_counts[key] = (stat.rx_bytes, stat.tx_bytes)
+                
+               
