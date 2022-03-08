@@ -63,6 +63,8 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
         
         # to calculate deltas for bandwith usage calculation
         self.port_byte_counts = {}
+        
+        self.reward = 0.0
        
         self.fields = {'time':'','datapath':'','in-port':'','eth_src':'','eth_dst':'','out-port':'','total_packets':0,'total_bytes':0}
 
