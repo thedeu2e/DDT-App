@@ -55,7 +55,7 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
         self.unrolled_state = []
         self.input_state = []
         
-        # to calculate deltas for ppacket calculation
+        # values for packet calculation
         self.flow_packet_count = {}
         
         # to calculate deltas for bandwith usage calculation
@@ -116,10 +116,14 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
         body = ev.msg.body
+        
+        flow_count = 0
 
         for stat in sorted([flow for flow in body if flow.priority == 1],
                            key=lambda flow: (flow.match['in_port'],
                                              flow.match['eth_dst'])):
+            flow_count += 1
+            
             #print details of flows
             self.fields['time'] = datetime.utcnow().strftime('%s')
             self.fields['datapath'] = ev.msg.datapath.id
@@ -150,23 +154,16 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
             self.state[datapath.id].append({})
             self.state[datapath.id].append(difference)
             self.state[datapath.id].append(rate)
-            self.state[datapath.id].append(flow_count_n)
+            self.state[datapath.id].append(flow_count)
         else:
             self.state[datapath.id][1] = difference
             self.state[datapath.id][2] = rate
-            self.state[datapath.id][3] = flow_count_n
+            self.state[datapath.id][3] = flow_count
             
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
     def _port_stats_reply_handler(self, ev):
         body = ev.msg.body
         temp = []
-
-        for stat in body:
-            temp.append(str(stat.rx_packets))
-            temp.append(str(stat.rx_bytes))
-            temp.append(str(stat.tx_packets))
-            temp.append(str(stat.tx_bytes))
-            self.state[datapath.id][0][stat.port_no] = temp
         
         for stat in sorted(body, key=attrgetter('port_no')):
              if stat.port_no != ofproto_v1_3.OFPP_LOCAL:
@@ -179,5 +176,12 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
                     tx_bitrate = self.bitrate(self,stat.tx_bytes - cnt2)
                     total_Kbps= rx_bitrate + tx_bitrate
                 self.port_byte_counts[key] = (stat.rx_bytes, stat.tx_bytes)
+                
+             temp.append(str(stat.rx_packets))
+             temp.append(str(stat.rx_bytes))
+             temp.append(str(stat.tx_packets))
+             temp.append(str(stat.tx_bytes))
+             temp.append(str(total_Kbps))
+             self.state[datapath.id][0][stat.port_no] = temp
                 
                
