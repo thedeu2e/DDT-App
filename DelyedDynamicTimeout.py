@@ -55,7 +55,7 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
         self.unrolled_state = []
         self.input_state = []
         
-        
+        # to calculate deltas for ppacket calculation
         self.flow_packet_count = {}
         
         # to calculate deltas for bandwith usage calculation
