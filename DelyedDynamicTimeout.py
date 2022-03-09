@@ -112,11 +112,6 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
 
         req = parser.OFPPortStatsRequest(datapath, 0, ofproto.OFPP_ANY)
         datapath.send_msg(req)
-        
-    def send_flow_stats_request(self, datapath):
-        parser = datapath.ofproto_parser
-        req = parser.OFPFlowStatsRequest(datapath)
-        datapath.send_msg(req)
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
@@ -133,8 +128,11 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
             self.fields['eth_dst'] = stat.match['eth_dst']
             self.fields['out_port'] = stat.instructions[0].actions[0].port
             
+            self.logger.info('data\t%s\t%x\t%x\t%s\t%s\t%x\t%d\t%d',self.fields['time'],self.fields['datapath'],self.fields['duration_sec'],self.fields['idle_timeout'],self.fields['in-port'],self.fields['eth_src'],self.fields['eth_dst'],self.fields['out-port'],self.fields['total_packets'],self.fields['total_bytes'])
+            
             # Check if we have a previous reading for this flow
             # Calculate packet increase over the last polling interval
+            difference = 0
             key = (self.fields['datapath'], self.fields['in_port'], self.fields['eth_src'], self.fields['eth_dst'], self.fields['out_port'])
             if key in self.flow_packet_count:
                 pcount = self.flow_packet_count[key]
@@ -147,12 +145,29 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
                 bcount = self.flow_byte_counts[key]
                 rate = self.bitrate(self,stat.byte_count - bcount)
             self.flow_byte_counts[key] = stat.byte_count
-
-            self.logger.info('data\t%s\t%x\t%x\t%s\t%s\t%x\t%d\t%d',self.fields['time'],self.fields['datapath'],self.fields['duration_sec'],self.fields['idle_timeout'],self.fields['in-port'],self.fields['eth_src'],self.fields['eth_dst'],self.fields['out-port'],self.fields['total_packets'],self.fields['total_bytes'])
+           
+        if len(self.state[datapath.id]) == 0:
+            self.state[datapath.id].append({})
+            self.state[datapath.id].append(difference)
+            self.state[datapath.id].append(rate)
+            self.state[datapath.id].append(flow_count_n)
+        else:
+            self.state[datapath.id][1] = difference
+            self.state[datapath.id][2] = rate
+            self.state[datapath.id][3] = flow_count_n
             
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
     def _port_stats_reply_handler(self, ev):
         body = ev.msg.body
+        temp = []
+
+        for stat in body:
+            temp.append(str(stat.rx_packets))
+            temp.append(str(stat.rx_bytes))
+            temp.append(str(stat.tx_packets))
+            temp.append(str(stat.tx_bytes))
+            self.state[datapath.id][0][stat.port_no] = temp
+        
         for stat in sorted(body, key=attrgetter('port_no')):
              if stat.port_no != ofproto_v1_3.OFPP_LOCAL:
                 key = (ev.msg.datapath.id, stat.port_no)
