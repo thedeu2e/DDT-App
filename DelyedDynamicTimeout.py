@@ -179,6 +179,8 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
                 
              temp.append(str(stat.rx_packets))
              temp.append(str(stat.rx_bytes))
+             temp.append(str(stat.rx_bitrate))
+             temp.append(str(stat.tx_bitrate))
              temp.append(str(stat.tx_packets))
              temp.append(str(stat.tx_bytes))
              temp.append(str(total_Kbps))
