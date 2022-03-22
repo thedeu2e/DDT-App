@@ -185,5 +185,11 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
              temp.append(str(stat.tx_bytes))
              temp.append(str(total_Kbps))
              self.state[datapath.id][0][stat.port_no] = temp
-                
-               
+    
+    def format_state(self):
+    def get_reward(self):
+    def reset(self):            
+    def step(self,action):
+          return next_state,reward,done
+        
+    def main(self):
