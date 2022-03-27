@@ -190,6 +190,11 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
     def get_reward(self):
     def reset(self):            
     def step(self,action):
-          return next_state,reward,done
+        
+        self.get_state()
+        time.sleep(2)
+        self.get_reward()
+        
+        return next_state,reward,done
         
     def main(self):
