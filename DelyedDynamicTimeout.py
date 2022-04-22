@@ -243,6 +243,33 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
              temp.append(str(stat.tx_bytes))
              temp.append(str(total_Kbps))
              self.state[datapath.id][0][stat.port_no] = temp
+                
+    @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
+    def flow_removed_handler(self, ev):
+        msg = ev.msg
+        dp = msg.datapath
+        ofp = dp.ofproto
+
+        if msg.reason == ofp.OFPRR_IDLE_TIMEOUT:
+            reason = 'IDLE TIMEOUT'
+        elif msg.reason == ofp.OFPRR_HARD_TIMEOUT:
+            reason = 'HARD TIMEOUT'
+        elif msg.reason == ofp.OFPRR_DELETE:
+            reason = 'DELETE'
+        elif msg.reason == ofp.OFPRR_GROUP_DELETE:
+            reason = 'GROUP DELETE'
+        else:
+            reason = 'unknown'
+
+        self.logger.debug('OFPFlowRemoved received: '
+                      'cookie=%d priority=%d reason=%s table_id=%d '
+                      'duration_sec=%d duration_nsec=%d '
+                      'idle_timeout=%d hard_timeout=%d '
+                      'packet_count=%d byte_count=%d match.fields=%s',
+                      msg.cookie, msg.priority, reason, msg.table_id,
+                      msg.duration_sec, msg.duration_nsec,
+                      msg.idle_timeout, msg.hard_timeout,
+                      msg.packet_count, msg.byte_count, msg.match)
     
     def format_state(self):
     def get_reward(self):
