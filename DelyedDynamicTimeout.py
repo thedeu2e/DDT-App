@@ -195,7 +195,7 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
             # Check if we have a previous reading for this flow
             # Calculate packet increase over the last polling interval
             difference = 0
-            key = (self.fields['datapath'], self.fields['in_port'], self.fields['eth_src'], self.fields['eth_dst'], self.fields['out_port'])
+            global key = (self.fields['datapath'], self.fields['in_port'], self.fields['eth_src'], self.fields['eth_dst'], self.fields['out_port'])
             if key in self.flow_packet_count:
                 pcount = self.flow_packet_count[key]
                 difference = (stat.packet_count - pcount)
@@ -249,6 +249,12 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
         msg = ev.msg
         dp = msg.datapath
         ofp = dp.ofproto
+        
+        if key in self.flow_packet_count:
+            del self.flow_packet_count[key]
+            
+        if key in self.flow_byte_count:
+            del self.flow_byte_count[key]
 
         if msg.reason == ofp.OFPRR_IDLE_TIMEOUT:
             reason = 'IDLE TIMEOUT'
