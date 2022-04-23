@@ -333,8 +333,10 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
             pass
         
         self.get_state()
-        time.sleep(2)
+        time.sleep(5)
         self.get_reward()
+        next_state = self.input_state
+        reward = self.reward
         
         return next_state,reward,done
         
