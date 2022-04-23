@@ -279,7 +279,8 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
     
     def format_state(self):
     def get_reward(self):
-    def reset(self):            
+    def reset(self):
+        
     def step(self, action):
         valid_actions = ['increase1', 'increase2', 'none']
         
