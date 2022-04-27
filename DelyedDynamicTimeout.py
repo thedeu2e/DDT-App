@@ -282,55 +282,59 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
     def reset(self):
         
     def step(self, action):
+        body = ev.msg.body
+        
         valid_actions = ['increase1', 'increase2', 'none']
-        
-        
-        if action == 'increase1':
-            ofp = datapath.ofproto
-            ofp_parser = datapath.ofproto_parser
+      
+        for stat in sorted([flow for flow in body if flow.priority == 1],
+                           key=lambda flow: (flow.match['in_port'],
+                                             flow.match['eth_dst'])):
+            if action == 'increase1':
+                ofp = datapath.ofproto
+                ofp_parser = datapath.ofproto_parser
 
-            cookie = cookie_mask = 0
-            table_id = 0
-            idle_timeout = hard_timeout = 5
-            priority = 32768
-            buffer_id = ofp.OFP_NO_BUFFER
-            match = ofp_parser.OFPMatch(in_port=1, eth_dst='ff:ff:ff:ff:ff:ff')
-            actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
-            inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
-                                             actions)]
-            req = ofp_parser.OFPFlowMod(datapath, cookie, cookie_mask,
-                                table_id, ofp.OFPFC_ADD,
-                                idle_timeout, hard_timeout,
-                                priority, buffer_id,
-                                ofp.OFPP_ANY, ofp.OFPG_ANY,
-                                ofp.OFPFF_SEND_FLOW_REM,
-                                match, inst)
-            datapath.send_msg(req)
+                cookie = cookie_mask = 0
+                table_id = 0
+                idle_timeout = hard_timeout = 5
+                priority = 32768
+                buffer_id = ofp.OFP_NO_BUFFER
+                match = ofp_parser.OFPMatch(in_port=1, eth_dst='ff:ff:ff:ff:ff:ff')
+                actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+                inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                                 actions)]
+                req = ofp_parser.OFPFlowMod(datapath, cookie, cookie_mask,
+                                    table_id, ofp.OFPFC_ADD,
+                                    idle_timeout, hard_timeout,
+                                    priority, buffer_id,
+                                    ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                    ofp.OFPFF_SEND_FLOW_REM,
+                                    match, inst)
+                datapath.send_msg(req)
             
-        elif action == 'increase2':
-            ofp = datapath.ofproto
-            ofp_parser = datapath.ofproto_parser
+            elif action == 'increase2':
+                ofp = datapath.ofproto
+                ofp_parser = datapath.ofproto_parser
 
-            cookie = cookie_mask = 0
-            table_id = 0
-            idle_timeout = hard_timeout = 10
-            priority = 32768
-            buffer_id = ofp.OFP_NO_BUFFER
-            match = ofp_parser.OFPMatch(in_port=1, eth_dst='ff:ff:ff:ff:ff:ff')
-            actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
-            inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
-                                             actions)]
-            req = ofp_parser.OFPFlowMod(datapath, cookie, cookie_mask,
-                                table_id, ofp.OFPFC_ADD,
-                                idle_timeout, hard_timeout,
-                                priority, buffer_id,
-                                ofp.OFPP_ANY, ofp.OFPG_ANY,
-                                ofp.OFPFF_SEND_FLOW_REM,
-                                match, inst)
-            datapath.send_msg(req)
-            
-        elif action =='none':
-            pass
+                cookie = cookie_mask = 0
+                table_id = 0
+                idle_timeout = hard_timeout = 10
+                priority = 32768
+                buffer_id = ofp.OFP_NO_BUFFER
+                match = ofp_parser.OFPMatch(in_port=1, eth_dst='ff:ff:ff:ff:ff:ff')
+                actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+                inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                                 actions)]
+                req = ofp_parser.OFPFlowMod(datapath, cookie, cookie_mask,
+                                    table_id, ofp.OFPFC_ADD,
+                                    idle_timeout, hard_timeout,
+                                    priority, buffer_id,
+                                    ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                    ofp.OFPFF_SEND_FLOW_REM,
+                                    match, inst)
+                datapath.send_msg(req)
+
+            elif action =='none':
+                pass
         
         self.get_state()
         time.sleep(5)
