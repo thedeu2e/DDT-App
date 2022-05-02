@@ -50,21 +50,6 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
         super(SimpleMonitor13, self).__init__(*args, **kwargs)
         self.monitor_thread = hub.spawn(self._monitor)
             
-        self.datapaths = {}
-        self.state = {}
-        self.unrolled_state = []
-        self.input_state = []
-        
-        # values for packet calculation
-        self.flow_packet_count = {}
-        
-        # to calculate deltas for bandwith usage calculation
-        self.flow_byte_counts = {}
-        
-        # to calculate deltas for bandwith usage calculation
-        self.port_byte_counts = {}
-        
-        self.reward = 0.0
        
         self.fields = {'time':'','datapath':'','in-port':'','eth_src':'','eth_dst':'','out-port':'','total_packets':0,'total_bytes':0}
 
@@ -93,9 +78,7 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
     def get_state(self):
         for dp in self.datapaths.values():
             self.send_flow_stats_request(dp)
-        hub.sleep(2 ) #TODO sleep
-        self.format_state()  # TODO
-        self.calculate_reward()
+        hub.sleep(5 ) #TODO sleep
         
     # Convert from data to bitrate(Kbps)
     @staticmethod
@@ -207,21 +190,10 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
                 bcount = self.flow_byte_counts[key]
                 rate = self.bitrate(self,stat.byte_count - bcount)
             self.flow_byte_counts[key] = stat.byte_count
-           
-        if len(self.state[datapath.id]) == 0:
-            self.state[datapath.id].append({})
-            self.state[datapath.id].append(difference)
-            self.state[datapath.id].append(rate)
-            self.state[datapath.id].append(flow_count)
-        else:
-            self.state[datapath.id][1] = difference
-            self.state[datapath.id][2] = rate
-            self.state[datapath.id][3] = flow_count
             
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
     def _port_stats_reply_handler(self, ev):
         body = ev.msg.body
-        temp = []
         
         for stat in sorted(body, key=attrgetter('port_no')):
              if stat.port_no != ofproto_v1_3.OFPP_LOCAL:
@@ -235,26 +207,12 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
                     total_Kbps= rx_bitrate + tx_bitrate
                 self.port_byte_counts[key] = (stat.rx_bytes, stat.tx_bytes)
                 
-             temp.append(str(stat.rx_packets))
-             temp.append(str(stat.rx_bytes))
-             temp.append(str(stat.rx_bitrate))
-             temp.append(str(stat.tx_bitrate))
-             temp.append(str(stat.tx_packets))
-             temp.append(str(stat.tx_bytes))
-             temp.append(str(total_Kbps))
-             self.state[datapath.id][0][stat.port_no] = temp
                 
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
         msg = ev.msg
         dp = msg.datapath
         ofp = dp.ofproto
-        
-        if key in self.flow_packet_count:
-            del self.flow_packet_count[key]
-            
-        if key in self.flow_byte_count:
-            del self.flow_byte_count[key]
 
         if msg.reason == ofp.OFPRR_IDLE_TIMEOUT:
             reason = 'IDLE TIMEOUT'
