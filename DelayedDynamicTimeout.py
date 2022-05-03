@@ -1,10 +1,14 @@
 from operator import attrgetter
 from datetime import datetime
+
+#base classes/libraries
+from ryu.base import app_manager
 from ryu.app import simple_switch
 from ryu.controller import ofp_event
 from ryu.controller.handler import MAIN_DISPATCHER, DEAD_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.lib import hub
+from ryu.ofproto import ofproto_v1_3
 
 sys.path.insert(0, './TD3')
 sys.path.insert(0, './utils')
@@ -48,9 +52,9 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
 
     def __init__(self, *args, **kwargs):
         super(SimpleMonitor13, self).__init__(*args, **kwargs)
+        self.datapaths = {}
         self.monitor_thread = hub.spawn(self._monitor)
-            
-       
+        
         self.fields = {'time':'','datapath':'','in-port':'','eth_src':'','eth_dst':'','out-port':'','total_packets':0,'total_bytes':0}
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
@@ -66,24 +70,7 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
                 self.logger.debug('unregister datapath: %016x', datapath.id)
-                del self.datapaths[datapath.id]
-
-    def _monitor(self):
-        self.logger.info('time\tdatapath\tin-port\teth-src\teth-dst\tout-port\ttotal_packets\ttotal_bytes')
-        while True:
-            for dp in self.datapaths.values():
-                self._request_stats(dp)
-            hub.sleep(5)
-            
-    def get_state(self):
-        for dp in self.datapaths.values():
-            self.send_flow_stats_request(dp)
-        hub.sleep(5 ) #TODO sleep
-        
-    # Convert from data to bitrate(Kbps)
-    @staticmethod
-    def bitrate(self,data):
-        return round(float(data * 8.0 / (self.interval*1000)),2) 
+                del self.datapaths[datapath.id] 
     
     def add_flow(self, datapath, priority, match, actions):
         ofproto = datapath.ofproto
@@ -96,12 +83,12 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
                                 match=match, instructions=inst)
         datapath.send_msg(mod)
     
-    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER) #Using 'MAIN_DISPATCHER' as the second argument means this function is called only after the negotiation completes
     def _packet_in_handler(self, ev):
-        msg = ev.msg
-        datapath = msg.datapath
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
+        msg = ev.msg #object that represents a packet_in data structure
+        datapath = msg.datapath #an object that represents a datapath (switch)
+        ofproto = datapath.ofproto #an object that represent the OpenFlow protocol that Ryu and the switch negotiated
+        parser = datapath.ofproto_parser #an object that represent the OpenFlow protocol that Ryu and the switch negotiated
         
         # get Datapath ID to identify OpenFlow switches.
         dpid = datapath.id
@@ -142,7 +129,10 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
                                   in_port=in_port, actions=actions,
                                   data=msg.data)
         datapath.send_msg(out)
-
+        
+        
+    #Features request message
+    #The controller sends a feature request to the switch upon session establishment.
     def _request_stats(self, datapath):
         self.logger.debug('send stats request: %016x', datapath.id)
         ofproto = datapath.ofproto
@@ -234,6 +224,23 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
                       msg.duration_sec, msg.duration_nsec,
                       msg.idle_timeout, msg.hard_timeout,
                       msg.packet_count, msg.byte_count, msg.match)
+        
+    # Convert from data to bitrate(Kbps)
+    @staticmethod
+    def bitrate(self,data):
+        return round(float(data * 8.0 / (self.interval*1000)),2)
+    
+    def _monitor(self):
+        self.logger.info('time\tdatapath\tin-port\teth-src\teth-dst\tout-port\ttotal_packets\ttotal_bytes')
+        while True:
+            for dp in self.datapaths.values():
+                self._request_stats(dp)
+            hub.sleep(5)
+            
+    def get_state(self):
+        for dp in self.datapaths.values():
+            self.send_flow_stats_request(dp)
+        hub.sleep(5 ) #TODO sleep
     
     def format_state(self):
     def get_reward(self):
