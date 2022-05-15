@@ -1,15 +1,15 @@
+# base classes/libraries
 from operator import attrgetter
-from datetime import datetime
 
-#base classes/libraries
-from ryu.base import app_manager
-from ryu.app import simple_switch
+from ryu.app import simple_switch_13
 from ryu.controller import ofp_event
 from ryu.controller.handler import MAIN_DISPATCHER, DEAD_DISPATCHER
 from ryu.controller.handler import set_ev_cls
-from ryu.lib import hub
 from ryu.ofproto import ofproto_v1_3
+from ryu.lib import hub
+from ryu.lib.packet import packet, ethernet
 
+"""""
 sys.path.insert(0, './TD3')
 sys.path.insert(0, './utils')
 
@@ -46,16 +46,21 @@ parser.add_argument('--exploration_noise', default=0.1, type=float)
 parser.add_argument('--max_episode', default=2000, type=int)
 parser.add_argument('--print_log', default=5, type=int)
 args = parser.parse_args()
+"""
 
-class SimpleMonitor(simple_switch.SimpleSwitch):
-    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
+fr_counter = 0
+avgfd = 0
+curr_count = 0
 
+class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
+    #OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     def __init__(self, *args, **kwargs):
         super(SimpleMonitor13, self).__init__(*args, **kwargs)
         self.datapaths = {}
         self.monitor_thread = hub.spawn(self._monitor)
-        
-        self.fields = {'time':'','datapath':'','in-port':'','eth_src':'','eth_dst':'','out-port':'','total_packets':0,'total_bytes':0}
+
+        self.pcount =0
+        self.avgfd = 0
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -64,13 +69,20 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
         if ev.state == MAIN_DISPATCHER:
             if datapath.id not in self.datapaths:
                 self.logger.debug('register datapath: %016x', datapath.id)
-                self.state[datapath.id] = []
                 self.datapaths[datapath.id] = datapath
-                
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
                 self.logger.debug('unregister datapath: %016x', datapath.id)
-                del self.datapaths[datapath.id] 
+                del self.datapaths[datapath.id]
+
+    def _monitor(self):
+        self.logger.info("starting flow monitoring thread")
+        while True:
+            for dp in self.datapaths.values():
+                self._request_stats(dp)
+            hub.sleep(10)
+
+
     
     def add_flow(self, datapath, priority, match, actions):
         ofproto = datapath.ofproto
@@ -133,76 +145,61 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
         
     #Features request message
     #The controller sends a feature request to the switch upon session establishment.
+
     def _request_stats(self, datapath):
         self.logger.debug('send stats request: %016x', datapath.id)
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
+        match = parser.OFPMatch()
+        cookie = cookie_mask = 0
 
-        req = parser.OFPFlowStatsRequest(datapath)
+        req = parser.OFPAggregateStatsRequest(datapath, 0,
+                                              ofproto.OFPTT_ALL,
+                                              ofproto.OFPP_ANY,
+                                              ofproto.OFPG_ANY,
+                                              cookie, cookie_mask,
+                                              match)
+
         datapath.send_msg(req)
 
-        req = parser.OFPPortStatsRequest(datapath, 0, ofproto.OFPP_ANY)
+        req = parser.OFPTableStatsRequest(datapath, 0)
         datapath.send_msg(req)
 
-    @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
+    @set_ev_cls(ofp_event.EventOFPAggregateStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
-        body = ev.msg.body
-        
-        flow_count = 0
+        results = ev.msg.body
+        self.logger.info('%s', results)
+        PPS = 0
+        difference = 0
+        curr_count = results.flow_count
 
-        for stat in sorted([flow for flow in body if flow.priority == 1],
-                           key=lambda flow: (flow.match['in_port'],
-                                             flow.match['eth_dst'])):
-            flow_count += 1
-            
-            #print details of flows
-            self.fields['time'] = datetime.utcnow().strftime('%s')
-            self.fields['datapath'] = ev.msg.datapath.id
-            self.fields['in_port'] = stat.match['in_port']
-            self.fields['eth_src'] = stat.match['eth_src']
-            self.fields['eth_dst'] = stat.match['eth_dst']
-            self.fields['out_port'] = stat.instructions[0].actions[0].port
-            
-            self.logger.info('data\t%s\t%x\t%x\t%s\t%s\t%x\t%d\t%d',self.fields['time'],self.fields['datapath'],self.fields['duration_sec'],self.fields['idle_timeout'],self.fields['in-port'],self.fields['eth_src'],self.fields['eth_dst'],self.fields['out-port'],self.fields['total_packets'],self.fields['total_bytes'])
-            
-            # Check if we have a previous reading for this flow
-            # Calculate packet increase over the last polling interval
-            difference = 0
-            global key = (self.fields['datapath'], self.fields['in_port'], self.fields['eth_src'], self.fields['eth_dst'], self.fields['out_port'])
-            if key in self.flow_packet_count:
-                pcount = self.flow_packet_count[key]
-                difference = (stat.packet_count - pcount)
-            self.flow_packet_count[key] = stat.packet_count
-            
-            #Calculate bandwith usage over the last polling interval
-            rate = 0
-            if key in self.flow_byte_counts:
-                bcount = self.flow_byte_counts[key]
-                rate = self.bitrate(self,stat.byte_count - bcount)
-            self.flow_byte_counts[key] = stat.byte_count
-            
-    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
-    def _port_stats_reply_handler(self, ev):
-        body = ev.msg.body
-        
-        for stat in sorted(body, key=attrgetter('port_no')):
-             if stat.port_no != ofproto_v1_3.OFPP_LOCAL:
-                key = (ev.msg.datapath.id, stat.port_no)
-                rx_bitrate, tx_bitrate = 0, 0
-                total_Kbps=0
-                if key in self.port_byte_counts:
-                    cnt1, cnt2 = self.port_byte_counts[key]
-                    rx_bitrate = self.bitrate(self,stat.rx_bytes - cnt1)
-                    tx_bitrate = self.bitrate(self,stat.tx_bytes - cnt2)
-                    total_Kbps= rx_bitrate + tx_bitrate
-                self.port_byte_counts[key] = (stat.rx_bytes, stat.tx_bytes)
-                
-                
+        if self.pcount == 0:
+            PPS = results.packet_count/10
+        else:
+            difference = abs(results.packet_count - self.pcount)
+            PPS = difference/10
+
+        self.pcount = results.packet_count
+        self.logger.info(PPS)
+
+    @set_ev_cls(ofp_event.EventOFPTableStatsReply, MAIN_DISPATCHER)
+    def table_stats_reply_handler(self, ev):
+        tables = []
+        for stat in ev.msg.body:
+            tables.append('table_id=%d active_count=%d lookup_count=%d matched_count=%d'
+                          %(stat.table_id, stat.active_count, stat.lookup_count, stat.matched_count))
+            hit = stat.matched_count/stat.lookup_count
+            use = stat.active_count/curr_count
+        self.logger.debug('TableStats: %s', tables)
+
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
         msg = ev.msg
         dp = msg.datapath
         ofp = dp.ofproto
+
+        total = 0
+        fr_counter =+ 1
 
         if msg.reason == ofp.OFPRR_IDLE_TIMEOUT:
             reason = 'IDLE TIMEOUT'
@@ -224,19 +221,13 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
                       msg.duration_sec, msg.duration_nsec,
                       msg.idle_timeout, msg.hard_timeout,
                       msg.packet_count, msg.byte_count, msg.match)
-        
-    # Convert from data to bitrate(Kbps)
-    @staticmethod
-    def bitrate(self,data):
-        return round(float(data * 8.0 / (self.interval*1000)),2)
+
+        total += msg.duration_sec
+        self.avgfd = total /fr_counter
+
     
-    def _monitor(self):
-        self.logger.info('time\tdatapath\tin-port\teth-src\teth-dst\tout-port\ttotal_packets\ttotal_bytes')
-        while True:
-            for dp in self.datapaths.values():
-                self._request_stats(dp)
-            hub.sleep(5)
-            
+
+    """""        
     def get_state(self):
         for dp in self.datapaths.values():
             self.send_flow_stats_request(dp)
@@ -258,19 +249,13 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
                 ofp = datapath.ofproto
                 ofp_parser = datapath.ofproto_parser
 
-                cookie = cookie_mask = 0
-                table_id = 0
-                idle_timeout = hard_timeout = 5
-                priority = 32768
-                buffer_id = ofp.OFP_NO_BUFFER
-                match = ofp_parser.OFPMatch(in_port=1, eth_dst='ff:ff:ff:ff:ff:ff')
+                idle_timeout = 5
+                match = ofp_parser.OFPMatch()
                 actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
                 inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
                                                  actions)]
-                req = ofp_parser.OFPFlowMod(datapath, cookie, cookie_mask,
-                                    table_id, ofp.OFPFC_ADD,
-                                    idle_timeout, hard_timeout,
-                                    priority, buffer_id,
+                req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
+                                    idle_timeout,
                                     ofp.OFPP_ANY, ofp.OFPG_ANY,
                                     ofp.OFPFF_SEND_FLOW_REM,
                                     match, inst)
@@ -280,19 +265,13 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
                 ofp = datapath.ofproto
                 ofp_parser = datapath.ofproto_parser
 
-                cookie = cookie_mask = 0
-                table_id = 0
-                idle_timeout = hard_timeout = 10
-                priority = 32768
-                buffer_id = ofp.OFP_NO_BUFFER
-                match = ofp_parser.OFPMatch(in_port=1, eth_dst='ff:ff:ff:ff:ff:ff')
+                idle_timeout = 10
+                match = ofp_parser.OFPMatch()
                 actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
                 inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
                                                  actions)]
-                req = ofp_parser.OFPFlowMod(datapath, cookie, cookie_mask,
-                                    table_id, ofp.OFPFC_ADD,
-                                    idle_timeout, hard_timeout,
-                                    priority, buffer_id,
+                req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
+                                    idle_timeout,
                                     ofp.OFPP_ANY, ofp.OFPG_ANY,
                                     ofp.OFPFF_SEND_FLOW_REM,
                                     match, inst)
@@ -310,3 +289,4 @@ class SimpleMonitor(simple_switch.SimpleSwitch):
         return next_state,reward,done
         
     def main(self):
+    """
