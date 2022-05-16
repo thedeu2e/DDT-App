@@ -1,7 +1,7 @@
 # -----------------------------------------------------------
 # (C) 2022 Nathan Harris, Jr., Greensbro, North Carolina
 # Released under the MIT License (MIT)
-# email ncharris1@eaggies.ncat.edu
+# email ncharris1@aggies.ncat.edu
 # -----------------------------------------------------------
 
 # base classes/libraries
@@ -54,11 +54,6 @@ parser.add_argument('--print_log', default=5, type=int)
 args = parser.parse_args()
 """
 
-total = 0 #flow duration total
-fr_counter = 0 #flow removed message counter
-avgfd = 0 #average flow duration
-curr_count = 0 #current flow entry count
-
 class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     #OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     def __init__(self, *args, **kwargs):
@@ -66,8 +61,14 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.datapaths = {} #dictionary to store datapaths object of all the switches for generating the stats request message.
         self.monitor_thread = hub.spawn(self._monitor)
 
-        self.pcount =0
         self.avgfd = 0
+        self.curr_count = 0
+        fr_counter = 0
+        self.pcount = 0
+        PPS = 0
+        total_dur = 0
+        self.hit = 0
+        self.use = 0
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -175,7 +176,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     def _flow_stats_reply_handler(self, ev):
         results = ev.msg.body
         self.logger.info('%s', results)
-        PPS = 0
+        
         difference = 0
         curr_count = results.flow_count
 
@@ -190,13 +191,20 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
     @set_ev_cls(ofp_event.EventOFPTableStatsReply, MAIN_DISPATCHER)
     def table_stats_reply_handler(self, ev):
+        matched_sum =0
+        active_sum = 0
+        lookup_sum = 0
         tables = []
         for stat in ev.msg.body:
             tables.append('table_id=%d active_count=%d lookup_count=%d matched_count=%d'
                           %(stat.table_id, stat.active_count, stat.lookup_count, stat.matched_count))
-            hit = stat.matched_count/stat.lookup_count
-            use = stat.active_count/curr_count
-        self.logger.debug('TableStats: %s', tables)
+            active_sum += stat.active_count
+            lookup_sum += stat.lookup_count
+            matched_sum += stat.matched_count
+        self.hit = matched_sum/lookup_sum
+        self.use = active_sum/self.curr_count
+        self.logger.info('TableStats: active flows=%d lookup=%d matched=%d', active_sum, lookup_sum, matched_sum)
+        self.logger.info('Hit Rate=%f Use Rate=%f', self.hit, self.use)
 
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
