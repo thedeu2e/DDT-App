@@ -1,3 +1,9 @@
+# -----------------------------------------------------------
+# (C) 2022 Nathan Harris, Jr., Greensbro, North Carolina
+# Released under the MIT License (MIT)
+# email ncharris1@eaggies.ncat.edu
+# -----------------------------------------------------------
+
 # base classes/libraries
 from operator import attrgetter
 
@@ -48,15 +54,16 @@ parser.add_argument('--print_log', default=5, type=int)
 args = parser.parse_args()
 """
 
-fr_counter = 0
-avgfd = 0
-curr_count = 0
+total = 0 #flow duration total
+fr_counter = 0 #flow removed message counter
+avgfd = 0 #average flow duration
+curr_count = 0 #current flow entry count
 
 class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     #OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     def __init__(self, *args, **kwargs):
         super(SimpleMonitor13, self).__init__(*args, **kwargs)
-        self.datapaths = {}
+        self.datapaths = {} #dictionary to store datapaths object of all the switches for generating the stats request message.
         self.monitor_thread = hub.spawn(self._monitor)
 
         self.pcount =0
@@ -142,7 +149,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                                   data=msg.data)
         datapath.send_msg(out)
         
-        
     #Features request message
     #The controller sends a feature request to the switch upon session establishment.
 
@@ -198,7 +204,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         dp = msg.datapath
         ofp = dp.ofproto
 
-        total = 0
         fr_counter =+ 1
 
         if msg.reason == ofp.OFPRR_IDLE_TIMEOUT:
