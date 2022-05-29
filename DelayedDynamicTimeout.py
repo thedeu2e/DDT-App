@@ -134,8 +134,167 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
             # Submit request to change flow idle duration on switches
             for dp in self.datapaths.values():
-            # TO DO
+                
+                if self.action == 1:
+                    ofp = dp.ofproto
+                    ofp_parser = dp.ofproto_parser
 
+                    idle_timeout = 1
+                    match = ofp_parser.OFPMatch()
+                    actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+                    inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                                             actions)]
+                    req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
+                                                idle_timeout,
+                                                ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                                ofp.OFPFF_SEND_FLOW_REM,
+                                                match, inst)
+                    dp.send_msg(req)
+
+                elif self.action == 2:
+                    ofp = dp.ofproto
+                    ofp_parser = dp.ofproto_parser
+
+                    idle_timeout = 2
+                    match = ofp_parser.OFPMatch()
+                    actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+                    inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                                             actions)]
+                    req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
+                                                idle_timeout,
+                                                ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                                ofp.OFPFF_SEND_FLOW_REM,
+                                                match, inst)
+                    dp.send_msg(req)
+
+                elif self.action == 3:
+                    ofp = dp.ofproto
+                    ofp_parser = dp.ofproto_parser
+
+                    idle_timeout = 3
+                    match = ofp_parser.OFPMatch()
+                    actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+                    inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                                             actions)]
+                    req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
+                                                idle_timeout,
+                                                ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                                ofp.OFPFF_SEND_FLOW_REM,
+                                                match, inst)
+                    dp.send_msg(req)
+
+                elif self.action == 4:
+                    ofp = dp.ofproto
+                    ofp_parser = dp.ofproto_parser
+
+                    idle_timeout = 4
+                    match = ofp_parser.OFPMatch()
+                    actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+                    inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                                             actions)]
+                    req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
+                                                idle_timeout,
+                                                ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                                ofp.OFPFF_SEND_FLOW_REM,
+                                                match, inst)
+                    dp.send_msg(req)
+
+                elif self.action == 5:
+                    ofp = dp.ofproto
+                    ofp_parser = dp.ofproto_parser
+
+                    idle_timeout = 5
+                    match = ofp_parser.OFPMatch()
+                    actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+                    inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                                             actions)]
+                    req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
+                                                idle_timeout,
+                                                ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                                ofp.OFPFF_SEND_FLOW_REM,
+                                                match, inst)
+                    dp.send_msg(req)
+
+                elif self.action == 6:
+                    ofp = dp.ofproto
+                    ofp_parser = dp.ofproto_parser
+
+                    idle_timeout = 6
+                    match = ofp_parser.OFPMatch()
+                    actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+                    inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                                             actions)]
+                    req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
+                                                idle_timeout,
+                                                ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                                ofp.OFPFF_SEND_FLOW_REM,
+                                                match, inst)
+                    dp.send_msg(req)
+
+                elif self.action == 7:
+                    ofp = dp.ofproto
+                    ofp_parser = dp.ofproto_parser
+
+                    idle_timeout = 7
+                    match = ofp_parser.OFPMatch()
+                    actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+                    inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                                             actions)]
+                    req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
+                                                idle_timeout,
+                                                ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                                ofp.OFPFF_SEND_FLOW_REM,
+                                                match, inst)
+                    dp.send_msg(req)
+
+                elif self.action == 8:
+                    ofp = dp.ofproto
+                    ofp_parser = dp.ofproto_parser
+
+                    idle_timeout = 8
+                    match = ofp_parser.OFPMatch()
+                    actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+                    inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                                             actions)]
+                    req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
+                                                idle_timeout,
+                                                ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                                ofp.OFPFF_SEND_FLOW_REM,
+                                                match, inst)
+                    dp.send_msg(req)
+
+                elif self.action == 9:
+                    ofp = dp.ofproto
+                    ofp_parser = dp.ofproto_parser
+
+                    idle_timeout = 9
+                    match = ofp_parser.OFPMatch()
+                    actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+                    inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                                             actions)]
+                    req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
+                                                idle_timeout,
+                                                ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                                ofp.OFPFF_SEND_FLOW_REM,
+                                                match, inst)
+                    dp.send_msg(req)
+
+                elif self.action == 10:
+                    ofp = dp.ofproto
+                    ofp_parser = dp.ofproto_parser
+
+                    idle_timeout = 10
+                    match = ofp_parser.OFPMatch()
+                    actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+                    inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                                             actions)]
+                    req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
+                                                idle_timeout,
+                                                ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                                ofp.OFPFF_SEND_FLOW_REM,
+                                                match, inst)
+                    dp.send_msg(req)
+                    
             hub.sleep(self.action)
 
             if self.episode_step >= MAX_EPISODE_STEPS:
