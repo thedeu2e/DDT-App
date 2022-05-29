@@ -1,5 +1,5 @@
 # -----------------------------------------------------------
-# (C) 2022 Nathan Harris, Jr., Greensbro, North Carolina
+# (C) 2022 Nathan Harris, Jr., Greensboro, North Carolina
 # Released under the MIT License (MIT)
 # email ncharris1@aggies.ncat.edu
 # -----------------------------------------------------------
@@ -11,18 +11,13 @@ from ryu.app import simple_switch_13
 from ryu.controller import ofp_event
 from ryu.controller.handler import MAIN_DISPATCHER, DEAD_DISPATCHER
 from ryu.controller.handler import set_ev_cls
-from ryu.ofproto import ofproto_v1_3
 from ryu.lib import hub
 from ryu.lib.packet import packet, ethernet
+from ryu.ofproto.ofproto_v1_3 import OFPM_ALL
+import TD3
+import random
 
 """""
-sys.path.insert(0, './TD3')
-sys.path.insert(0, './utils')
-
-from TD3 import Actor as Actor 
-from TD3 import Critic as Critic 
-from utils import ReplayBuffer as Memory
-
 parser = argparse.ArgumentParser()
 
 parser.add_argument('--mode', default='train', type=str) # mode = 'train' or 'test'
@@ -54,21 +49,34 @@ parser.add_argument('--print_log', default=5, type=int)
 args = parser.parse_args()
 """
 
+STATE_DIM = 4
+ACTION_DIM = 10
+MAX_ACTION = 10
+MAX_EPISODE_STEPS = 50000
+
 class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
-    #OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
     def __init__(self, *args, **kwargs):
         super(SimpleMonitor13, self).__init__(*args, **kwargs)
-        self.datapaths = {} #dictionary to store datapaths object of all the switches for generating the stats request message.
+        self.datapaths = {}
         self.monitor_thread = hub.spawn(self._monitor)
 
         self.avgfd = 0
         self.curr_count = 0
-        fr_counter = 0
+        self.fr_counter = 0
         self.pcount = 0
         PPS = 0
-        total_dur = 0
+        self.total_dur = 0
         self.hit = 0
         self.use = 0
+        self.prev_pin = 0
+        self.prev_dur = 0
+        PIAT = 0
+        self.model = TD3.TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)
+        self.prev_state = [None, None, None, None]
+        self.state = [None, None, None, None]
+        self.episode_step = 0
+        self.action = 5
+        self.replay_buffer = TD3.utils.ReplayBuffer(STATE_DIM, ACTION_DIM)
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -78,6 +86,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             if datapath.id not in self.datapaths:
                 self.logger.debug('register datapath: %016x', datapath.id)
                 self.datapaths[datapath.id] = datapath
+                #self.state[datapath.id] = []
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
                 self.logger.debug('unregister datapath: %016x', datapath.id)
@@ -88,10 +97,52 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         while True:
             for dp in self.datapaths.values():
                 self._request_stats(dp)
-            hub.sleep(10)
+                # Collect the initial environment state in the prev_state variable
+                # prev_state is a vector with 4 values
+                if self.episode_step == 0:
+                    self.prev_state = [None, 0, None, self.action]
+                    # This while loop will keep running while one or more features are still set to none
+                    while self.prev_state[0] is None or self.prev_state[2] is None:
+                        continue
+                # Once we've collected initial environment state, we collect the next state
+                else:
+                    # Reset the sample each time
+                    self.state = [None, 0, None, self.prev_state[3]]
+                    # This while loop will keep running while one or more features are still set to none
+                    while self.state[0] is None or self.state[2] is None:
+                        continue
 
 
-    
+
+                    # Once all features are no longer set to None, fit our model on the sample
+                    reward = (self.use + (self.hit * 0.5)) / 1.5
+                    done_bool = 1 if self.episode_step < MAX_EPISODE_STEPS else 0
+
+                    self.replay_buffer.add(self.prev_state, self.action, self.state, reward, done_bool)
+
+                    self.model.train(self.replay_buffer)
+
+                    self.prev_state = self.state
+
+                self.episode_step += 1
+
+            # Randomly select a new action
+            new_action = random.randint(0, 10)
+            if new_action != 0:
+                self.action = new_action
+
+
+            # Submit request to change flow idle duration on switches
+            for dp in self.datapaths.values():
+            # TO DO
+
+            hub.sleep(self.action)
+
+            if self.episode_step >= MAX_EPISODE_STEPS:
+                break
+
+        self.model.save("model/TD3_trained")
+
     def add_flow(self, datapath, priority, match, actions):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -150,6 +201,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                                   data=msg.data)
         datapath.send_msg(out)
         
+        
     #Features request message
     #The controller sends a feature request to the switch upon session establishment.
 
@@ -172,13 +224,17 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         req = parser.OFPTableStatsRequest(datapath, 0)
         datapath.send_msg(req)
 
+        req = parser.OFPMeterStatsRequest(datapath, 0, OFPM_ALL)
+        datapath.send_msg(req)
+
     @set_ev_cls(ofp_event.EventOFPAggregateStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
+        datapath = ev.msg.datapath
         results = ev.msg.body
         self.logger.info('%s', results)
         
         difference = 0
-        curr_count = results.flow_count
+        self.curr_count = results.flow_count
 
         if self.pcount == 0:
             PPS = results.packet_count/10
@@ -186,25 +242,47 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             difference = abs(results.packet_count - self.pcount)
             PPS = difference/10
 
+        # Set the first index in the sample to PPS
+        self.statee[0] = PPS
+
         self.pcount = results.packet_count
         self.logger.info(PPS)
 
     @set_ev_cls(ofp_event.EventOFPTableStatsReply, MAIN_DISPATCHER)
     def table_stats_reply_handler(self, ev):
-        matched_sum =0
+        matched_sum = 0
         active_sum = 0
         lookup_sum = 0
-        tables = []
+
         for stat in ev.msg.body:
-            tables.append('table_id=%d active_count=%d lookup_count=%d matched_count=%d'
-                          %(stat.table_id, stat.active_count, stat.lookup_count, stat.matched_count))
             active_sum += stat.active_count
             lookup_sum += stat.lookup_count
             matched_sum += stat.matched_count
+
         self.hit = matched_sum/lookup_sum
         self.use = active_sum/self.curr_count
         self.logger.info('TableStats: active flows=%d lookup=%d matched=%d', active_sum, lookup_sum, matched_sum)
-        self.logger.info('Hit Rate=%f Use Rate=%f', self.hit, self.use)
+        self.logger.info('Match Rate=%f Entry Use=%f', self.hit, self.use)
+
+    @set_ev_cls(ofp_event.EventOFPMeterStatsReply, MAIN_DISPATCHER)
+    def meter_stats_reply_handler(self, ev):
+
+        for stat in ev.msg.body:
+            total_pin =+ stat.packet_in_count
+            total_dur =+ stat.dur_sec + 1e9 * stat.duration_nsec
+
+            if self.prev_pin == 0 & self.prev_dur == 0:
+                PIAT = total_dur / total_pin
+            elif abs(total_pin - self.prev_pin) != 0:
+                diff_pin = abs(total_pin - self.prev_pin)
+                diff_dur = abs(total_dur - self.prev_dur)
+                PIAT = diff_dur / diff_pin
+
+            self.prev_pin = total_pin
+            self.prev_dur = total_dur
+            self.logger.info(PIAT)
+
+            self.state[2] = PIAT
 
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
@@ -212,7 +290,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         dp = msg.datapath
         ofp = dp.ofproto
 
-        fr_counter =+ 1
+        self.fr_counter =+ 1
 
         if msg.reason == ofp.OFPRR_IDLE_TIMEOUT:
             reason = 'IDLE TIMEOUT'
@@ -235,71 +313,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                       msg.idle_timeout, msg.hard_timeout,
                       msg.packet_count, msg.byte_count, msg.match)
 
-        total += msg.duration_sec
-        self.avgfd = total /fr_counter
+        self.total_dur += msg.duration_sec
+        self.avgfd = self.total_dur/self.fr_counter
 
-    
-
-    """""        
-    def get_state(self):
-        for dp in self.datapaths.values():
-            self.send_flow_stats_request(dp)
-        hub.sleep(5 ) #TODO sleep
-    
-    def format_state(self):
-    def get_reward(self):
-    def reset(self):
-        
-    def step(self, action):
-        body = ev.msg.body
-        
-        valid_actions = ['increase1', 'increase2', 'none']
-      
-        for stat in sorted([flow for flow in body if flow.priority == 1],
-                           key=lambda flow: (flow.match['in_port'],
-                                             flow.match['eth_dst'])):
-            if action == 'increase1':
-                ofp = datapath.ofproto
-                ofp_parser = datapath.ofproto_parser
-
-                idle_timeout = 5
-                match = ofp_parser.OFPMatch()
-                actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
-                inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
-                                                 actions)]
-                req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
-                                    idle_timeout,
-                                    ofp.OFPP_ANY, ofp.OFPG_ANY,
-                                    ofp.OFPFF_SEND_FLOW_REM,
-                                    match, inst)
-                datapath.send_msg(req)
-            
-            elif action == 'increase2':
-                ofp = datapath.ofproto
-                ofp_parser = datapath.ofproto_parser
-
-                idle_timeout = 10
-                match = ofp_parser.OFPMatch()
-                actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
-                inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
-                                                 actions)]
-                req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
-                                    idle_timeout,
-                                    ofp.OFPP_ANY, ofp.OFPG_ANY,
-                                    ofp.OFPFF_SEND_FLOW_REM,
-                                    match, inst)
-                datapath.send_msg(req)
-
-            elif action =='none':
-                pass
-        
-        self.get_state()
-        time.sleep(5)
-        self.get_reward()
-        next_state = self.input_state
-        reward = self.reward
-        
-        return next_state,reward,done
-        
-    def main(self):
-    """
+        self.state[1] = self.avgfd
