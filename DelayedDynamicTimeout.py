@@ -86,7 +86,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             if datapath.id not in self.datapaths:
                 self.logger.debug('register datapath: %016x', datapath.id)
                 self.datapaths[datapath.id] = datapath
-                #self.state[datapath.id] = []
+        
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
                 self.logger.debug('unregister datapath: %016x', datapath.id)
@@ -402,7 +402,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             PPS = difference/10
 
         # Set the first index in the sample to PPS
-        self.statee[0] = PPS
+        self.state[0] = PPS
 
         self.pcount = results.packet_count
         self.logger.info(PPS)
