@@ -13,7 +13,6 @@ from ryu.controller.handler import MAIN_DISPATCHER, DEAD_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.lib import hub
 from ryu.lib.packet import packet, ethernet
-from ryu.ofproto.ofproto_v1_3 import OFPM_ALL
 import TD3, utils
 import random
 
@@ -70,7 +69,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.use = 0
         self.prev_pin = 0
         self.prev_dur = 0
-        PIAT = 0
+        self.PIAT = 0
         self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)
         self.prev_state = [None, None, None, None]
         self.state = [None, None, None, None]
