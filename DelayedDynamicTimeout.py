@@ -237,29 +237,32 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         req = parser.OFPTableStatsRequest(datapath, 0)
         datapath.send_msg(req)
 
-        req = parser.OFPMeterStatsRequest(datapath, 0, OFPM_ALL)
-        datapath.send_msg(req)
-
     @set_ev_cls(ofp_event.EventOFPAggregateStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
-        datapath = ev.msg.datapath
+
         results = ev.msg.body
         self.logger.info('%s', results)
-        
-        difference = 0
+
         self.curr_count = results.flow_count
 
         if self.pcount == 0:
-            PPS = results.packet_count/10
+            PPS = results.packet_count / self.action
+            self.PIAT = self.action/results.packet_count
         else:
             difference = abs(results.packet_count - self.pcount)
-            PPS = difference/10
+            PPS = difference / self.action
+            if difference == 0:
+                self.PIAT = 0
+            else:
+                self.PIAT = self.action/difference
 
-        # Set the first index in the sample to PPS
+    # Set the first index in the sample to PPS
         self.state[0] = PPS
+        self.state[2] = self.PIAT
 
         self.pcount = results.packet_count
-        self.logger.info(PPS)
+        self.logger.info('PPS=%d', PPS)
+        self.logger.info('PIAT=%f', self.PIAT)
 
     @set_ev_cls(ofp_event.EventOFPTableStatsReply, MAIN_DISPATCHER)
     def table_stats_reply_handler(self, ev):
@@ -276,26 +279,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.use = active_sum/self.curr_count
         self.logger.info('TableStats: active flows=%d lookup=%d matched=%d', active_sum, lookup_sum, matched_sum)
         self.logger.info('Match Rate=%f Entry Use=%f', self.hit, self.use)
-
-    @set_ev_cls(ofp_event.EventOFPMeterStatsReply, MAIN_DISPATCHER)
-    def meter_stats_reply_handler(self, ev):
-
-        for stat in ev.msg.body:
-            total_pin =+ stat.packet_in_count
-            total_dur =+ stat.dur_sec + 1e9 * stat.duration_nsec
-
-            if self.prev_pin == 0 & self.prev_dur == 0:
-                PIAT = total_dur / total_pin
-            elif abs(total_pin - self.prev_pin) != 0:
-                diff_pin = abs(total_pin - self.prev_pin)
-                diff_dur = abs(total_dur - self.prev_dur)
-                PIAT = diff_dur / diff_pin
-
-            self.prev_pin = total_pin
-            self.prev_dur = total_dur
-            self.logger.info(PIAT)
-
-            self.state[2] = PIAT
 
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
