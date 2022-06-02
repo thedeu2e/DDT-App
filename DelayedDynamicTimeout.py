@@ -49,7 +49,7 @@ args = parser.parse_args()
 """
 
 STATE_DIM = 4
-ACTION_DIM = 10
+ACTION_DIM = 11
 MAX_ACTION = 10
 MAX_EPISODE_STEPS = 50000
 
