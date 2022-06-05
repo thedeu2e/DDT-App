@@ -48,10 +48,10 @@ parser.add_argument('--print_log', default=5, type=int)
 args = parser.parse_args()
 """
 
-STATE_DIM = 4
-ACTION_DIM = 11
-MAX_ACTION = 10
-MAX_EPISODE_STEPS = 50000
+STATE_DIM = 4  # 4-Dimensional State Space: [PPS, avg_fd, PIAT, action]
+ACTION_DIM = 11  # 11-Dimensional Action Space: 0-10
+MAX_ACTION = 10  # 10 is the choice with the highest value available to the agent
+MAX_EPISODE_STEPS = 50000  # the maximum number of episodes used to train the model
 
 class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     def __init__(self, *args, **kwargs):
@@ -59,23 +59,20 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.datapaths = {}
         self.monitor_thread = hub.spawn(self._monitor)
 
-        self.avgfd = 0
-        self.curr_count = 0
-        self.fr_counter = 0
-        self.pcount = 0
-        PPS = 0
-        self.total_dur = 0
-        self.hit = 0
-        self.use = 0
-        self.prev_pin = 0
-        self.prev_dur = 0
-        self.PIAT = 0
-        self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)
-        self.prev_state = [None, None, None, None]
-        self.state = [None, None, None, None]
-        self.episode_step = 0
-        self.action = 5
-        self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)
+        self.avg_fd = 0  # average flow duration from flow removed message | feature (state)
+        self.curr_count = 0  # current number of flows in flow table from table stats reply
+        self.fr_counter = 0  # running total of flows that have been removed from flow table from flow removed
+        self.p_count = 0  # previous packet count from flow stats reply
+        self.total_dur = 0  # running total of duration for flows removed from flow removed message
+        self.hit = 0  # percentage of packets matched from table stats reply | outcome (reward)
+        self.use = 0  # percentage of active flows from table stats reply | outcome (reward)
+        self.PIAT = 0  # packet inter-arrival time from flow stats reply | feature (state)
+        self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)  # TD3 initialization
+        self.prev_state = [None, None, None, None]  # placeholder for previous state
+        self.state = [None, None, None, None]  # placeholder for current state
+        self.episode_step = 0  # episode counter initialization
+        self.action = 10  # initial action | feature (state)
+        self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)  # Replay Buffer initialization
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -242,73 +239,55 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         results = ev.msg.body
         self.logger.info('%s', results)
 
-        self.curr_count = results.flow_count
+        self.curr_count = results.flow_count  # flows in flow table for sample period
 
-        if self.pcount == 0:
+        if results.packet_count == 0:  # prevents zero division error
+            PPS = results.packet_count / self.action  # packets per second = packets / duration | feature (state)
+            self.PIAT = 0  # no packets arrived
+        elif self.p_count == 0:  # if initial reply
             PPS = results.packet_count / self.action
-            self.PIAT = self.action/results.packet_count
+            self.PIAT = self.action / results.packet_count  # packet inter-arrival time = duration / packets
         else:
-            difference = abs(results.packet_count - self.pcount)
+            difference = abs(results.packet_count - self.p_count)  # calculate packet count
             PPS = difference / self.action
-            if difference == 0:
-                self.PIAT = 0
+            if difference == 0:  # prevents zero division error
+                self.PIAT = 0  # no packets arrived
             else:
-                self.PIAT = self.action/difference
+                self.PIAT = self.action / difference
 
-    # Set the first index in the sample to PPS
+        # Set the first index in the state to PPS
         self.state[0] = PPS
+        # Set the third index in the state to PIAT
         self.state[2] = self.PIAT
 
-        self.pcount = results.packet_count
+        self.p_count = results.packet_count  # hold value
         self.logger.info('PPS=%d', PPS)
         self.logger.info('PIAT=%f', self.PIAT)
-
+   
     @set_ev_cls(ofp_event.EventOFPTableStatsReply, MAIN_DISPATCHER)
     def table_stats_reply_handler(self, ev):
-        matched_sum = 0
-        active_sum = 0
-        lookup_sum = 0
+        matched_sum = 0  # summation of packets matched in flow table(s)
+        active_sum = 0  # summation of active flows in flow table(s)
+        lookup_sum = 0  # summation of packets looked up in flow table(s)
 
+        # stat collection
         for stat in ev.msg.body:
             active_sum += stat.active_count
             lookup_sum += stat.lookup_count
             matched_sum += stat.matched_count
 
-        self.hit = matched_sum/lookup_sum
-        self.use = active_sum/self.curr_count
+        self.hit = matched_sum / lookup_sum  # % of packets matched
+        self.use = active_sum / self.curr_count  # % of flows actively receiving packets
         self.logger.info('TableStats: active flows=%d lookup=%d matched=%d', active_sum, lookup_sum, matched_sum)
         self.logger.info('Match Rate=%f Entry Use=%f', self.hit, self.use)
 
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
         msg = ev.msg
-        dp = msg.datapath
-        ofp = dp.ofproto
+        self.fr_counter = + 1  # increase by one every time a flow is removed
 
-        self.fr_counter =+ 1
+        self.total_dur += msg.duration_sec  # add the duration of the removed flow to the running total
+        self.avg_fd = self.total_dur / self.fr_counter  # duration / flows
 
-        if msg.reason == ofp.OFPRR_IDLE_TIMEOUT:
-            reason = 'IDLE TIMEOUT'
-        elif msg.reason == ofp.OFPRR_HARD_TIMEOUT:
-            reason = 'HARD TIMEOUT'
-        elif msg.reason == ofp.OFPRR_DELETE:
-            reason = 'DELETE'
-        elif msg.reason == ofp.OFPRR_GROUP_DELETE:
-            reason = 'GROUP DELETE'
-        else:
-            reason = 'unknown'
-
-        self.logger.debug('OFPFlowRemoved received: '
-                      'cookie=%d priority=%d reason=%s table_id=%d '
-                      'duration_sec=%d duration_nsec=%d '
-                      'idle_timeout=%d hard_timeout=%d '
-                      'packet_count=%d byte_count=%d match.fields=%s',
-                      msg.cookie, msg.priority, reason, msg.table_id,
-                      msg.duration_sec, msg.duration_nsec,
-                      msg.idle_timeout, msg.hard_timeout,
-                      msg.packet_count, msg.byte_count, msg.match)
-
-        self.total_dur += msg.duration_sec
-        self.avgfd = self.total_dur/self.fr_counter
-
-        self.state[1] = self.avgfd
+        # Set the second index in the state to avg_fd
+        self.state[1] = self.avg_fd
