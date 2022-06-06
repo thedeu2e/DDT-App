@@ -91,20 +91,33 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
     def _monitor(self):
         self.logger.info("starting flow monitoring thread")
-        if self.episode_step == 0:
-            # Set initial state
-            self.state = [None, 0, None, self.action]
-        else:
-            # Reset the state each time
-            self.state = [None, 0, None, self.prev_state[3]]
-
         while True:
+            if self.episode_step == 0:
+                # Set initial state
+                self.state = [None, 0, None, self.action]
+            else:
+                # Reset the state each time
+                self.state = [None, 0, None, self.prev_state[3]]
+            
             for datapath in self.datapaths.values():
                 self._request_stats(datapath)
                 self.logger.info("requests sent")
+                
+                # self.send_barrier_request()
 
             self.logger.info("Current State%s", self.state)
             hub.sleep(self.action)
+            
+    def send_barrier_request(self, datapath):
+        parser = datapath.ofproto_parser
+
+        req = parser.OFPBarrierRequest(datapath)
+
+        datapath.send_msg(req)
+
+    @set_ev_cls(ofp_event.EventOFPBarrierPeply, MAIN_DISPATCHER)
+    def barrier_reply_handler(self, ev):
+        self.logger.debug('OFPBarrierReply received')
 
     def add_flow(self, datapath, priority, match, actions, **kwargs):
         ofproto = datapath.ofproto
@@ -180,9 +193,11 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                                                ofproto.OFPG_ANY,
                                                cookie, cookie_mask,
                                                match)
-        request1 = ofctl_api.send_msg(self, msg1, reply_cls=parser.OFPAggregateStatsReply, reply_multi=False)
-
+        
         msg2 = parser.OFPTableStatsRequest(datapath, 0)
+        
+        # synchronize requests & replies so that thread waits for updates
+        request1 = ofctl_api.send_msg(self, msg1, reply_cls=parser.OFPAggregateStatsReply, reply_multi=False)
         request2 = ofctl_api.send_msg(self, msg2, reply_cls=parser.OFPTableStatsReply, reply_multi=False)
 
         self.dynamic_timeout()
@@ -274,6 +289,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                                         ofp.OFPFF_SEND_FLOW_REM,
                                         match, inst)
             dp.send_msg(req)
+            
+            # self.barrier_reply_handler
 
     def dynamic_timeout(self):
         self.logger.info('here')
