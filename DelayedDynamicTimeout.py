@@ -14,6 +14,8 @@ from ryu.lib import hub
 from ryu.lib.packet import packet, ethernet
 from TD3 import TD3, utils
 
+import random
+
 """""
 parser = argparse.ArgumentParser()
 
