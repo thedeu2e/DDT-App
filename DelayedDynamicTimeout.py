@@ -278,9 +278,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     def dynamic_timeout(self):
         self.logger.info('here')
 
-        # Collect the initial environment state in the prev_state variable
-        # prev_state is a vector with 4 values
-
         # Once all features are no longer set to None, fit our model on the sample
         reward = (self.use + (self.hit * 0.5)) / 1.5
         done_bool = 1 if self.episode_step < MAX_EPISODE_STEPS else 0
@@ -288,9 +285,12 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.replay_buffer.add(self.prev_state, self.action, self.state, reward, done_bool)
 
         self.model.train(self.replay_buffer)
-
+        
+        # Collect the initial environment state in the prev_state variable
+        # prev_state is a vector with 4 values
         self.prev_state = self.state
         self.logger.info("Previous State%s", self.prev_state)
+        
         self.episode_step += 1
         self.logger.info(self.episode_step)
 
