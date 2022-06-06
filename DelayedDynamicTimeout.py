@@ -115,7 +115,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         datapath.send_msg(req)
 
-    @set_ev_cls(ofp_event.EventOFPBarrierPeply, MAIN_DISPATCHER)
+    @set_ev_cls(ofp_event.EventOFPBarrierReply, MAIN_DISPATCHER)
     def barrier_reply_handler(self, ev):
         self.logger.debug('OFPBarrierReply received')
 
