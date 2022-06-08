@@ -99,13 +99,11 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 self.prev_state = np.array([0, 0, 0, self.action])
             else:
                 # Reset the state each time
-                self.state = np.array([0, 0, 0, self.prev_state[3]], dtype=np.int8)
+                self.state = np.array([0, 0, 0, self.action], dtype=np.int8)
 
             for datapath in self.datapaths.values():
                 self._request_stats(datapath)
                 self.logger.info("requests sent")
-                # self.send_barrier_request(datapath)
-                # self.send_flow_mod(datapath)
 
             # self.send_barrier_request()
 
@@ -191,18 +189,18 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         match = parser.OFPMatch()
         cookie = cookie_mask = 0
-        msg1 = parser.OFPAggregateStatsRequest(datapath, 0,
-                                               ofproto.OFPTT_ALL,
-                                               ofproto.OFPP_ANY,
-                                               ofproto.OFPG_ANY,
-                                               cookie, cookie_mask,
-                                               match)
+        flows = parser.OFPAggregateStatsRequest(datapath, 0,
+                                                ofproto.OFPTT_ALL,
+                                                ofproto.OFPP_ANY,
+                                                ofproto.OFPG_ANY,
+                                                cookie, cookie_mask,
+                                                match)
 
-        msg2 = parser.OFPTableStatsRequest(datapath, 0)
+        table = parser.OFPTableStatsRequest(datapath, 0)
 
         # synchronize requests & replies so that thread waits for updates
-        ofctl_api.send_msg(self, msg1, reply_cls=parser.OFPAggregateStatsReply, reply_multi=False)
-        ofctl_api.send_msg(self, msg2, reply_cls=parser.OFPTableStatsReply, reply_multi=False)
+        ofctl_api.send_msg(self, flows, reply_cls=parser.OFPAggregateStatsReply, reply_multi=False)
+        ofctl_api.send_msg(self, table, reply_cls=parser.OFPTableStatsReply, reply_multi=False)
 
         # Once all features are no longer set to None, fit our model on the sample
         self.dynamic_timeout()
@@ -230,14 +228,14 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         # Set the first index in the state to PPS
         self.state[0] = PPS
-        self.logger.info(self.state)
         # Set the third index in the state to PIAT
         self.state[2] = self.PIAT
-        self.logger.info(self.state)
 
         self.p_count = results.packet_count  # hold value
         self.logger.info('PPS=%d', PPS)
         self.logger.info('PIAT=%f', self.PIAT)
+
+        self.logger.info(self.state)
 
     @set_ev_cls(ofp_event.EventOFPTableStatsReply, MAIN_DISPATCHER)
     def table_stats_reply_handler(self, ev):
@@ -279,19 +277,22 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
     def send_flow_mod(self, datapath):
         ofp = datapath.ofproto
-        ofp_parser = datapath.ofproto_parser
+        parser = datapath.ofproto_parser
+
+        self.logger.info("time: %s", self.action)
 
         idle_timeout = self.action
-        match = ofp_parser.OFPMatch()
-        actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
-        inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
-                                                 actions)]
-        req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
-                                    idle_timeout,
-                                    ofp.OFPP_ANY, ofp.OFPG_ANY,
-                                    ofp.OFPFF_SEND_FLOW_REM,
-                                    match, inst)
-        datapath.send_msg(req)
+        match = parser.OFPMatch()
+        actions = [parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+        inst = [parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                             actions)]
+        mod = parser.OFPFlowMod(datapath, ofp.OFPFC_ADD,
+                                idle_timeout,
+                                ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                ofp.OFPFF_SEND_FLOW_REM,
+                                match, inst)
+
+        ofctl_api.send_msg(self, mod, reply_cls=None, reply_multi=False)
 
         # self.barrier_reply_handler
 
@@ -320,5 +321,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         if new_action != 0:
             self.action = new_action
             self.logger.info(self.action)
+
+        for datapath in self.datapaths.values():
+            self.send_flow_mod(datapath)
 
         # self.barrier_reply_handler
