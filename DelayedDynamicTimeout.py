@@ -14,7 +14,7 @@ from ryu.lib import hub
 from ryu.lib.packet import packet, ethernet
 from TD3 import TD3, utils
 
-import random
+import numpy as np
 
 """""
 parser = argparse.ArgumentParser()
@@ -69,8 +69,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.use = 0  # percentage of active flows from table stats reply | outcome (reward)
         self.PIAT = 0  # packet inter-arrival time from flow stats reply | feature (state)
         self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)  # TD3 initialization
-        self.prev_state = [None, None, None, None]  # placeholder for previous state
-        self.state = [None, None, None, None]  # placeholder for current state
+        self.prev_state = np.array([None, None, None, None])  # placeholder for previous state
+        self.state = np.array([None, None, None, None])  # placeholder for current state
         self.episode_step = 0  # episode counter initialization
         self.action = 10  # initial action | feature (state)
         self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)  # Replay Buffer initialization
@@ -91,23 +91,27 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
     def _monitor(self):
         self.logger.info("starting flow monitoring thread")
+
         while True:
             if self.episode_step == 0:
                 # Set initial state
-                self.state = [None, 0, None, self.action]
+                self.state = np.array([0, 0, 0, self.action], dtype=np.int8)
+                self.prev_state = np.array([0, 0, 0, self.action])
             else:
                 # Reset the state each time
-                self.state = [None, 0, None, self.prev_state[3]]
-            
+                self.state = np.array([0, 0, 0, self.prev_state[3]], dtype=np.int8)
+
             for datapath in self.datapaths.values():
                 self._request_stats(datapath)
                 self.logger.info("requests sent")
-                
-                # self.send_barrier_request()
+                # self.send_barrier_request(datapath)
+                # self.send_flow_mod(datapath)
+
+            # self.send_barrier_request()
 
             self.logger.info("Current State%s", self.state)
             hub.sleep(self.action)
-            
+
     def send_barrier_request(self, datapath):
         parser = datapath.ofproto_parser
 
@@ -193,13 +197,14 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                                                ofproto.OFPG_ANY,
                                                cookie, cookie_mask,
                                                match)
-        
-        msg2 = parser.OFPTableStatsRequest(datapath, 0)
-        
-        # synchronize requests & replies so that thread waits for updates
-        request1 = ofctl_api.send_msg(self, msg1, reply_cls=parser.OFPAggregateStatsReply, reply_multi=False)
-        request2 = ofctl_api.send_msg(self, msg2, reply_cls=parser.OFPTableStatsReply, reply_multi=False)
 
+        msg2 = parser.OFPTableStatsRequest(datapath, 0)
+
+        # synchronize requests & replies so that thread waits for updates
+        ofctl_api.send_msg(self, msg1, reply_cls=parser.OFPAggregateStatsReply, reply_multi=False)
+        ofctl_api.send_msg(self, msg2, reply_cls=parser.OFPTableStatsReply, reply_multi=False)
+
+        # Once all features are no longer set to None, fit our model on the sample
         self.dynamic_timeout()
 
     @set_ev_cls(ofp_event.EventOFPAggregateStatsReply, MAIN_DISPATCHER)
@@ -273,48 +278,47 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.state[1] = self.avg_fd
 
     def send_flow_mod(self, datapath):
-        # Submit request to change flow idle duration on switches
-        for dp in self.datapaths.values():
-            ofp = dp.ofproto
-            ofp_parser = dp.ofproto_parser
+        ofp = datapath.ofproto
+        ofp_parser = datapath.ofproto_parser
 
-            idle_timeout = self.action
-            match = ofp_parser.OFPMatch()
-            actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
-            inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
-                                                     actions)]
-            req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
-                                        idle_timeout,
-                                        ofp.OFPP_ANY, ofp.OFPG_ANY,
-                                        ofp.OFPFF_SEND_FLOW_REM,
-                                        match, inst)
-            dp.send_msg(req)
-            
-            # self.barrier_reply_handler
+        idle_timeout = self.action
+        match = ofp_parser.OFPMatch()
+        actions = [ofp_parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
+        inst = [ofp_parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
+                                                 actions)]
+        req = ofp_parser.OFPFlowMod(ofp.OFPFC_ADD,
+                                    idle_timeout,
+                                    ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                    ofp.OFPFF_SEND_FLOW_REM,
+                                    match, inst)
+        datapath.send_msg(req)
+
+        # self.barrier_reply_handler
 
     def dynamic_timeout(self):
         self.logger.info('here')
 
-        # Once all features are no longer set to None, fit our model on the sample
+        # reward that agent receives for previous action places an emphasis on flows being active
         reward = (self.use + (self.hit * 0.5)) / 1.5
+
         done_bool = 1 if self.episode_step < MAX_EPISODE_STEPS else 0
         self.logger.info("here3")
+
         self.replay_buffer.add(self.prev_state, self.action, self.state, reward, done_bool)
+        self.logger.info(self.replay_buffer)
 
         self.model.train(self.replay_buffer)
-        
-        # Collect the initial environment state in the prev_state variable
-        # prev_state is a vector with 4 values
-        self.prev_state = self.state
+
         self.logger.info("Previous State%s", self.prev_state)
-        
+
+        # increase episode counter
         self.episode_step += 1
         self.logger.info(self.episode_step)
 
         # Randomly select a new action
-
-        new_action = random.randint(0, 10)
+        new_action = np.argmax(self.model.select_action(self.state))
         if new_action != 0:
             self.action = new_action
+            self.logger.info(self.action)
 
-        # self.send_flow_mod(self.datapaths.values)
+        # self.barrier_reply_handler
