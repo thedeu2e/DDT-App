@@ -105,21 +105,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 self._request_stats(datapath)
                 self.logger.info("requests sent")
 
-            # self.send_barrier_request()
-
             self.logger.info("Current State%s", self.state)
             hub.sleep(self.action)
-
-    def send_barrier_request(self, datapath):
-        parser = datapath.ofproto_parser
-
-        req = parser.OFPBarrierRequest(datapath)
-
-        datapath.send_msg(req)
-
-    @set_ev_cls(ofp_event.EventOFPBarrierReply, MAIN_DISPATCHER)
-    def barrier_reply_handler(self, ev):
-        self.logger.debug('OFPBarrierReply received')
 
     def add_flow(self, datapath, priority, match, actions, **kwargs):
         ofproto = datapath.ofproto
@@ -232,10 +219,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.state[2] = self.PIAT
 
         self.p_count = results.packet_count  # hold value
-        self.logger.info('PPS=%d', PPS)
-        self.logger.info('PIAT=%f', self.PIAT)
-
-        self.logger.info(self.state)
 
     @set_ev_cls(ofp_event.EventOFPTableStatsReply, MAIN_DISPATCHER)
     def table_stats_reply_handler(self, ev):
@@ -289,32 +272,28 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         actions = [parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
         inst = [parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
                                              actions)]
-        mod = parser.OFPFlowMod(datapath, cookie_mask, table_id,
-                                ofp.OFPFC_MODIFY,
-                                idle_timeout, buffer_id,
-                                ofp.OFPP_ANY, ofp.OFPG_ANY,
-                                ofp.OFPFF_SEND_FLOW_REM,
-                                match, inst)
+        mod = parser.OFPFlowMod(datapath=datapath, cookie_mask=cookie_mask, table_id=table_id,
+                                command=ofp.OFPFC_MODIFY, idle_timeout=idle_timeout,
+                                buffer_id=buffer_id, flags=ofp.OFPFF_SEND_FLOW_REM,
+                                match=match, instructions=inst)
 
-        ofctl_api.send_msg(self, mod, reply_cls=None, reply_multi=False)
-
-        # self.barrier_reply_handler
+        datapath.send_msg(mod)
 
     def dynamic_timeout(self):
-        self.logger.info('here')
 
         # reward that agent receives for previous action places an emphasis on flows being active
         reward = (self.use + (self.hit * 0.5)) / 1.5
 
         done_bool = 1 if self.episode_step < MAX_EPISODE_STEPS else 0
-        self.logger.info("here3")
 
         self.replay_buffer.add(self.prev_state, self.action, self.state, reward, done_bool)
-        self.logger.info(self.replay_buffer)
 
         self.model.train(self.replay_buffer)
 
         self.logger.info("Previous State%s", self.prev_state)
+
+        # set previous state equal to current state for replay value in next iteration
+        self.prev_state = self.state
 
         # increase episode counter
         self.episode_step += 1
@@ -328,5 +307,4 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         for datapath in self.datapaths.values():
             self.send_flow_mod(datapath)
-
-        # self.barrier_reply_handler
+            
