@@ -95,11 +95,11 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         while True:
             if self.episode_step == 0:
                 # Set initial state
-                self.state = np.array([0, 0, 0, self.action], dtype=np.int8)
+                self.state = np.array([None, 10, None, self.action], dtype=np.float)
                 self.prev_state = np.array([0, 0, 0, self.action])
             else:
                 # Reset the state each time
-                self.state = np.array([0, 0, 0, self.action], dtype=np.int8)
+                self.state = np.array([None, self.prev_state[1], None, self.action], dtype=np.float)
 
             for datapath in self.datapaths.values():
                 self._request_stats(datapath)
@@ -281,13 +281,17 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         self.logger.info("time: %s", self.action)
 
+        cookie_mask = 0
+        table_id = ofp.OFPTT_ALL
         idle_timeout = self.action
+        buffer_id = ofp.OFP_NO_BUFFER
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofp.OFPP_NORMAL, 0)]
         inst = [parser.OFPInstructionActions(ofp.OFPIT_APPLY_ACTIONS,
                                              actions)]
-        mod = parser.OFPFlowMod(datapath, ofp.OFPFC_ADD,
-                                idle_timeout,
+        mod = parser.OFPFlowMod(datapath, cookie_mask, table_id,
+                                ofp.OFPFC_MODIFY,
+                                idle_timeout, buffer_id,
                                 ofp.OFPP_ANY, ofp.OFPG_ANY,
                                 ofp.OFPFF_SEND_FLOW_REM,
                                 match, inst)
