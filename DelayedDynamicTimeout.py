@@ -285,7 +285,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         self.model.train(self.replay_buffer)
 
-        self.logger.info("Previous State%s", self.prev_state)
+        self.logger.info("Previous State: %f", self.prev_state)
 
         # set previous state equal to current state for replay value in next iteration
         self.prev_state = self.state
