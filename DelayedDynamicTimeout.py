@@ -100,12 +100,13 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             else:
                 # Reset the state each time
                 self.state = np.array([None, self.prev_state[1], None, self.action], dtype=np.float)
-
+            
+            # controller request(s) statistics from switch(es) 
             for datapath in self.datapaths.values():
                 self._request_stats(datapath)
                 self.logger.info("requests sent")
 
-            self.logger.info("Current State%s", self.state)
+            self.logger.info("Current State: %f", self.state)
             hub.sleep(self.action)
 
     def add_flow(self, datapath, priority, match, actions, **kwargs):
@@ -139,8 +140,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         # get the received port number from packet_in message.
         in_port = msg.match['in_port']
-
-        self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
 
         # learn a mac address to avoid FLOOD next time.
         self.mac_to_port[dpid][src] = in_port
@@ -195,7 +194,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     @set_ev_cls(ofp_event.EventOFPAggregateStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
         results = ev.msg.body
-        self.logger.info('%s', results)
 
         self.curr_count = results.flow_count  # flows in flow table for sample period
 
@@ -242,9 +240,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             self.use = 0
         else:
             self.use = active_sum / self.curr_count  # % of flows actively receiving packets
-
-        self.logger.info('TableStats: active flows=%d lookup=%d matched=%d', active_sum, lookup_sum, matched_sum)
-        self.logger.info('Match Rate=%f Entry Use=%f', self.hit, self.use)
 
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
@@ -304,7 +299,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         if new_action != 0:
             self.action = new_action
             self.logger.info(self.action)
-
+        
+        # if action does not change, the timeout of value of new flows are modified; else, all flows modified
         for datapath in self.datapaths.values():
             self.send_flow_mod(datapath)
             
