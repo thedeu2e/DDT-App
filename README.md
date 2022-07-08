@@ -14,4 +14,3 @@ Install dependencies
 * Install Ryu 
 * Install Tensorflow
 * Install Keras
-* D-ITG
