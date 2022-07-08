@@ -297,11 +297,12 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
         msg = ev.msg
-
+        
+        # whenever function is called, increase counter by 1
         self.fr_counter = + 1  # increase by one every time a flow is removed
 
         self.total_dur += msg.duration_sec  # add the duration of the removed flow to the running total
-        self.avg_fd = self.total_dur / self.fr_counter  # duration / flows
+        self.avg_fd = self.total_dur / self.fr_counter  # duration of flows removed/number of flows removed
 
         # Set the second index in the state to avg_fd
         self.state[1] = self.avg_fd
@@ -328,7 +329,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.episode_step += 1
         self.logger.info("Step: %s", self.episode_step)
 
-        # Randomly select a new action
+        # Agent selects a new action
         new_action = np.argmax(self.model.select_action(self.state))
         if new_action != 0:
             self.action = new_action
