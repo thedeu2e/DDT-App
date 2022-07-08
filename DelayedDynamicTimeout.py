@@ -101,7 +101,9 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 # Reset the state each time
                 self.state = np.array([None, self.prev_state[1], None, self.action], dtype=np.float)
 
-            # sends stats request to every switch
+            # sends stats request(aggregate, table) to every switch
+            # calls a barrier that pauses thread until agent has selected an action
+            # send flow stats request to every switch for flow modification
             for datapath in self.datapaths.values():
                 self._request_stats(datapath)
                 self.send_barrier_request(datapath)
@@ -219,6 +221,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                                          cookie, cookie_mask,
                                          match)
 
+        # synchronize requests & replies so that thread waits for updates
         ofctl_api.send_msg(self, req, reply_cls=parser.OFPFlowStatsReply, reply_multi=True)
 
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
@@ -237,24 +240,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                                     flags=ofp.OFPFF_SEND_FLOW_REM,
                                     match=stat.match, instructions=stat.instructions)
 
-            ofctl_api.send_msg(self, mod, reply_cls=None, reply_multi=True)
-
-        flows = []
-        for stat in body:
-            flows.append('table_id=%s '
-                         'duration_sec=%d duration_nsec=%d '
-                         'priority=%d '
-                         'idle_timeout=%d hard_timeout=%d flags=0x%04x '
-                         'cookie=%d packet_count=%d byte_count=%d '
-                         'match=%s instructions=%s' %
-                         (stat.table_id,
-                          stat.duration_sec, stat.duration_nsec,
-                          stat.priority,
-                          stat.idle_timeout, stat.hard_timeout, stat.flags,
-                          stat.cookie, stat.packet_count, stat.byte_count,
-                          stat.match, stat.instructions))
-
-        self.logger.info('FlowStats: %s', flows)
+            # synchronize requests & replies so that thread waits for updates
+            ofctl_api.send_msg(self, mod, reply_cls=None, reply_multi=False)
 
     @set_ev_cls(ofp_event.EventOFPAggregateStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
