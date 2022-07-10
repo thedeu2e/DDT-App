@@ -12,5 +12,3 @@ Install dependencies
 * Install Mininet
 * Install OpenVSwitch
 * Install Ryu 
-* Install Tensorflow
-* Install Keras
