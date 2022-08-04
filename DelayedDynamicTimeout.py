@@ -123,6 +123,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS,
                                              actions)]
         mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
+                                command=ofproto.OFPFC_ADD, idle_timeout=self.action,
+                                flags=ofproto.OFPFF_SEND_FLOW_REM,
                                 match=match, instructions=inst)
         datapath.send_msg(mod)
 
@@ -208,40 +210,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         # Once all features are no longer set to None, fit our model on the sample
         self.dynamic_timeout()
-
-    def send_flow_stats_request(self, datapath):
-        ofp = datapath.ofproto
-        parser = datapath.ofproto_parser
-
-        cookie = cookie_mask = 0
-        match = parser.OFPMatch()
-        req = parser.OFPFlowStatsRequest(datapath, 0,
-                                         ofp.OFPTT_ALL,
-                                         ofp.OFPP_ANY, ofp.OFPG_ANY,
-                                         cookie, cookie_mask,
-                                         match)
-
-        # synchronize requests & replies so that thread waits for updates
-        ofctl_api.send_msg(self, req, reply_cls=parser.OFPFlowStatsReply, reply_multi=True)
-
-    @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
-    def flow_stats_reply_handler(self, ev):
-        body = ev.msg.body
-        datapath = ev.msg.datapath
-        ofp = datapath.ofproto
-        parser = datapath.ofproto_parser
-
-        for stat in ([flow for flow in body]):
-
-            mod = parser.OFPFlowMod(datapath=datapath, table_id=stat.table_id,
-                                    command=ofp.OFPFC_ADD, idle_timeout=self.action,
-                                    priority=stat.priority,
-                                    out_port=ofp.OFPP_ANY, out_group=ofp.OFPG_ANY,
-                                    flags=ofp.OFPFF_SEND_FLOW_REM,
-                                    match=stat.match, instructions=stat.instructions)
-
-            # synchronize requests & replies so that thread waits for updates
-            ofctl_api.send_msg(self, mod, reply_cls=None, reply_multi=False)
 
     @set_ev_cls(ofp_event.EventOFPAggregateStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
