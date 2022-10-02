@@ -8,11 +8,18 @@
 from ryu.app import simple_switch_13
 import ryu.app.ofctl.api as ofctl_api
 from ryu.controller import ofp_event
-from ryu.controller.handler import MAIN_DISPATCHER, DEAD_DISPATCHER
+from ryu.controller.handler import MAIN_DISPATCHER, DEAD_DISPATCHER, CONFIG_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.lib import hub
-from ryu.lib.packet import packet, ethernet
+from ryu.lib.packet import packet, ethernet, ether_types
 from TD3 import TD3, utils
+
+#required for Layer 4 matching
+from ryu.lib.packet import in_proto
+from ryu.lib.packet import ipv4
+from ryu.lib.packet import icmp
+from ryu.lib.packet import tcp
+from ryu.lib.packet import udp
 
 import numpy as np
 
@@ -101,19 +108,29 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 # Reset the state each time
                 self.state = np.array([None, self.prev_state[1], None, self.action], dtype=np.float)
 
-            # sends stats request(aggregate, table) to every switch
-            # calls a barrier that pauses thread until agent has selected an action
-            # send flow stats request to every switch for flow modification
+            # sends stats request to every switch
             for datapath in self.datapaths.values():
                 self._request_stats(datapath)
-                self.send_barrier_request(datapath)
-                self.send_flow_stats_request(datapath)
+                #self.send_barrier_request(datapath)
 
             # displays current state of network
             self.logger.info("Current State:%s ", self.state)
 
             # thread sleeps for new duration selected by agent
-            hub.sleep(self.action)
+            hub.sleep(15)
+
+    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+    def switch_features_handler(self, ev):
+        datapath = ev.msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+
+        #install the table-miss flow entry.
+        match = parser.OFPMatch()
+        actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                          ofproto.OFPCML_NO_BUFFER)]
+        self.add_flow(datapath, 0, match, actions)
+
 
     def add_flow(self, datapath, priority, match, actions, **kwargs):
         ofproto = datapath.ofproto
@@ -135,45 +152,74 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         datapath = msg.datapath  # an object that represents a datapath (switch)
         ofproto = datapath.ofproto  # an object that represent the OpenFlow protocol that Ryu and the switch negotiated
         parser = datapath.ofproto_parser  # object that represents the OpenFlow protocol that Ryu & the switch negotiated
+        in_port = msg.match['in_port']
 
-        # get Datapath ID to identify OpenFlow switches.
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocols(ethernet.ethernet)[0]
+
+        if eth.ethertype == ether_types.ETH_TYPE_LLDP:
+            # ignore lldp packet
+            return
+        dst = eth.dst
+        src = eth.src
+
         dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
 
-        # analyse the received packets using the packet library.
-        pkt = packet.Packet(msg.data)
-        eth_pkt = pkt.get_protocol(ethernet.ethernet)
-        dst = eth_pkt.dst
-        src = eth_pkt.src
-
-        # get the received port number from packet_in message.
-        in_port = msg.match['in_port']
-
-        # self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
+        #self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
 
         # learn a mac address to avoid FLOOD next time.
         self.mac_to_port[dpid][src] = in_port
 
-        # if the destination mac address is already learned,
-        # decide which port to output the packet, otherwise FLOOD.
         if dst in self.mac_to_port[dpid]:
             out_port = self.mac_to_port[dpid][dst]
         else:
             out_port = ofproto.OFPP_FLOOD
 
-        # construct action list.
         actions = [parser.OFPActionOutput(out_port)]
 
-        # install a flow to avoid packet_in next time.
+        # install a flow to avoid packet_in next time
         if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
-            self.add_flow(datapath, 1, match, actions)
 
-        # construct packet_out message and send it.
-        out = parser.OFPPacketOut(datapath=datapath,
-                                  buffer_id=ofproto.OFP_NO_BUFFER,
-                                  in_port=in_port, actions=actions,
-                                  data=msg.data)
+            # check IP Protocol and create a match for IP
+            if eth.ethertype == ether_types.ETH_TYPE_IP:
+                ip = pkt.get_protocol(ipv4.ipv4)
+                srcip = ip.src
+                dstip = ip.dst
+                protocol = ip.proto
+
+                # if ICMP Protocol
+                if protocol == in_proto.IPPROTO_ICMP:
+                    match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip,
+                                            ip_proto=protocol)
+
+                #  if TCP Protocol
+                elif protocol == in_proto.IPPROTO_TCP:
+                    t = pkt.get_protocol(tcp.tcp)
+                    match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip,
+                                            ip_proto=protocol, tcp_src=t.src_port, tcp_dst=t.dst_port, )
+
+                #  If UDP Protocol
+                elif protocol == in_proto.IPPROTO_UDP:
+                    u = pkt.get_protocol(udp.udp)
+                    match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip,
+                                            ip_proto=protocol, udp_src=u.src_port, udp_dst=u.dst_port, )
+
+                    # verify if we have a valid buffer_id, if yes avoid to send both
+                # flow_mod & packet_out
+                if msg.buffer_id != ofproto.OFP_NO_BUFFER:
+                    self.add_flow(datapath, 1, match, actions, msg.buffer_id)
+                    return
+                else:
+                    self.add_flow(datapath, 1, match, actions)
+
+        self.curr_count+=1
+        data = None
+        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+            data = msg.data
+
+        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                  in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
 
     def send_barrier_request(self, datapath):
@@ -216,7 +262,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         results = ev.msg.body
         self.logger.info('%s', results)
 
-        self.curr_count = results.flow_count  # flows in flow table for sample period
+        #self.curr_count = results.flow_count  # flows in flow table for sample period
 
         if results.packet_count == 0:  # prevents zero division error
             PPS = results.packet_count / self.action  # packets per second = packets / duration | feature (state)
@@ -262,15 +308,19 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         else:
             self.use = active_sum / self.curr_count  # % of flows actively receiving packets
 
+            self.logger.info("Hit: %s", self.hit)
+            self.logger.info("Active: %s", self.use)
+
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
         msg = ev.msg
-        
-        # whenever function is called, increase counter by 1
-        self.fr_counter = + 1  # increase by one every time a flow is removed
+
+        self.curr_count -= 1
+
+        self.fr_counter += 1  # increase by one every time a flow is removed
 
         self.total_dur += msg.duration_sec  # add the duration of the removed flow to the running total
-        self.avg_fd = self.total_dur / self.fr_counter  # duration of flows removed/number of flows removed
+        self.avg_fd = self.total_dur / self.fr_counter  # duration / flows
 
         # Set the second index in the state to avg_fd
         self.state[1] = self.avg_fd
@@ -297,11 +347,11 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.episode_step += 1
         self.logger.info("Step: %s", self.episode_step)
 
-        # Agent selects a new action
+        # Randomly select a new action
         new_action = np.argmax(self.model.select_action(self.state))
         if new_action != 0:
             self.action = new_action
 
         self.logger.info("time: %s", self.action)
 
-        self.barrier_reply_handler
+        #self.barrier_reply_handler
