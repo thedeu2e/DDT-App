@@ -60,6 +60,8 @@ ACTION_DIM = 11  # 11-Dimensional Action Space: 0-10
 MAX_ACTION = 10  # 10 is the choice with the highest value available to the agent
 MAX_EPISODE_STEPS = 50000  # the maximum number of episodes used to train the model
 
+poll = 5
+
 
 class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     def __init__(self, *args, **kwargs):
@@ -117,7 +119,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             self.logger.info("Current State:%s ", self.state)
 
             # thread sleeps for new duration selected by agent
-            hub.sleep(15)
+            hub.sleep(poll)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -265,18 +267,18 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         #self.curr_count = results.flow_count  # flows in flow table for sample period
 
         if results.packet_count == 0:  # prevents zero division error
-            PPS = results.packet_count / self.action  # packets per second = packets / duration | feature (state)
+            PPS = results.packet_count / poll  # packets per second = packets / duration | feature (state)
             self.PIAT = 0  # no packets arrived
         elif self.p_count == 0:  # if initial reply
-            PPS = results.packet_count / self.action
-            self.PIAT = self.action / results.packet_count  # packet inter-arrival time = duration / packets
+            PPS = results.packet_count / poll
+            self.PIAT = poll / results.packet_count  # packet inter-arrival time = duration / packets
         else:
             difference = abs(results.packet_count - self.p_count)  # calculate packet count
-            PPS = difference / self.action
+            PPS = difference / poll
             if difference == 0:  # prevents zero division error
                 self.PIAT = 0  # no packets arrived
             else:
-                self.PIAT = self.action / difference
+                self.PIAT = poll / difference
 
         # Set the first index in the state to PPS
         self.state[0] = PPS
