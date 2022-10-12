@@ -74,7 +74,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.curr_count = 0  # current number of flows in flow table from table stats reply
         self.fr_counter = 0  # running total of flows that have been removed from flow table from flow removed
         self.p_count = 0  # previous packet count from flow stats reply
-        self.total_packets # holds total packets in switch at time of polling
+        self.total_packets = 0 # holds total packets in switch at time of polling
         self.total_dur = 0  # running total of duration for flows removed from flow removed message
         self.hit = 0  # percentage of packets matched from table stats reply | outcome (reward)
         self.use = 0  # percentage of active flows from table stats reply | outcome (reward)
