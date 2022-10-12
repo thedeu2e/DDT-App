@@ -14,7 +14,7 @@ from ryu.lib import hub
 from ryu.lib.packet import packet, ethernet, ether_types
 from TD3 import TD3, utils
 
-#required for Layer 4 matching
+# required for Layer 4 matching
 from ryu.lib.packet import in_proto
 from ryu.lib.packet import ipv4
 from ryu.lib.packet import icmp
@@ -69,10 +69,12 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.datapaths = {}
         self.monitor_thread = hub.spawn(self._monitor)
 
+        self.switches = {}  # a list of switches within the network to keep track of key:flow rule entries, value:packet count pairs
         self.avg_fd = 0  # average flow duration from flow removed message | feature (state)
         self.curr_count = 0  # current number of flows in flow table from table stats reply
         self.fr_counter = 0  # running total of flows that have been removed from flow table from flow removed
         self.p_count = 0  # previous packet count from flow stats reply
+        self.total_packets # holds total packets in switch at time of polling
         self.total_dur = 0  # running total of duration for flows removed from flow removed message
         self.hit = 0  # percentage of packets matched from table stats reply | outcome (reward)
         self.use = 0  # percentage of active flows from table stats reply | outcome (reward)
@@ -92,11 +94,13 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             if datapath.id not in self.datapaths:
                 self.logger.debug('register datapath: %016x', datapath.id)
                 self.datapaths[datapath.id] = datapath
+                self.switches[datapath.id] = {}
 
         elif ev.state == DEAD_DISPATCHER:
             if datapath.id in self.datapaths:
                 self.logger.debug('unregister datapath: %016x', datapath.id)
                 del self.datapaths[datapath.id]
+                del self.switches[datapath.id]
 
     def _monitor(self):
         self.logger.info("starting flow monitoring thread")
@@ -113,7 +117,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             # sends stats request to every switch
             for datapath in self.datapaths.values():
                 self._request_stats(datapath)
-                #self.send_barrier_request(datapath)
+                self.send_barrier_request(datapath)
 
             # displays current state of network
             self.logger.info("Current State:%s ", self.state)
@@ -127,12 +131,11 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
-        #install the table-miss flow entry.
+        # install the table-miss flow entry.
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
-
 
     def add_flow(self, datapath, priority, match, actions, **kwargs):
         ofproto = datapath.ofproto
@@ -168,8 +171,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
 
-        #self.logger.info("packet in %s %s %s %s", dpid, src, dst, in_port)
-
         # learn a mac address to avoid FLOOD next time.
         self.mac_to_port[dpid][src] = in_port
 
@@ -192,22 +193,25 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
                 # if ICMP Protocol
                 if protocol == in_proto.IPPROTO_ICMP:
-                    match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip,
+                    match = parser.OFPMatch(in_port=in_port, eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip,
+                                            ipv4_dst=dstip,
                                             ip_proto=protocol)
 
                 #  if TCP Protocol
                 elif protocol == in_proto.IPPROTO_TCP:
                     t = pkt.get_protocol(tcp.tcp)
-                    match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip,
+                    match = parser.OFPMatch(in_port=in_port, eth_type=ether_types.ETH_TYPE_IP, eth_dst=dst, eth_src=src,
+                                            ipv4_src=srcip, ipv4_dst=dstip,
                                             ip_proto=protocol, tcp_src=t.src_port, tcp_dst=t.dst_port, )
 
                 #  If UDP Protocol
                 elif protocol == in_proto.IPPROTO_UDP:
                     u = pkt.get_protocol(udp.udp)
-                    match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip, ipv4_dst=dstip,
+                    match = parser.OFPMatch(in_port=in_port, eth_type=ether_types.ETH_TYPE_IP, eth_dst=dst, eth_src=src,
+                                            ipv4_src=srcip, ipv4_dst=dstip,
                                             ip_proto=protocol, udp_src=u.src_port, udp_dst=u.dst_port, )
 
-                    # verify if we have a valid buffer_id, if yes avoid to send both
+                # verify if we have a valid buffer_id, if yes avoid to send both
                 # flow_mod & packet_out
                 if msg.buffer_id != ofproto.OFP_NO_BUFFER:
                     self.add_flow(datapath, 1, match, actions, msg.buffer_id)
@@ -215,7 +219,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 else:
                     self.add_flow(datapath, 1, match, actions)
 
-        self.curr_count+=1
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
             data = msg.data
@@ -243,6 +246,13 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         match = parser.OFPMatch()
         cookie = cookie_mask = 0
+
+        flow = parser.OFPFlowStatsRequest(datapath, 0,
+                                          ofproto.OFPTT_ALL,
+                                          ofproto.OFPP_ANY, ofproto.OFPG_ANY,
+                                          cookie, cookie_mask,
+                                          match)
+
         flows = parser.OFPAggregateStatsRequest(datapath, 0,
                                                 ofproto.OFPTT_ALL,
                                                 ofproto.OFPP_ANY,
@@ -253,18 +263,37 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         table = parser.OFPTableStatsRequest(datapath, 0)
 
         # synchronize requests & replies so that thread waits for updates
+        ofctl_api.send_msg(self, flow, reply_cls=parser.OFPFlowStatsReply, reply_multi=True)
         ofctl_api.send_msg(self, flows, reply_cls=parser.OFPAggregateStatsReply, reply_multi=True)
         ofctl_api.send_msg(self, table, reply_cls=parser.OFPTableStatsReply, reply_multi=True)
 
         # Once all features are no longer set to None, fit our model on the sample
         self.dynamic_timeout()
 
+    @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
+    def flow_stats_reply_handler(self, ev):
+        body = ev.msg.body
+        self.curr_count = 0
+
+        for stat in body:
+            flow = str(stat.match)
+
+            if flow not in self.switches[ev.msg.datapath.id]:
+                self.switches[ev.msg.datapath.id][flow] = stat.packet_count
+                self.curr_count += 1
+            elif self.switches[ev.msg.datapath.id][flow] != stat.packet_count:
+                self.switches[ev.msg.datapath.id][flow] = stat.packet_count
+                self.curr_count += 1
+
+        self.logger.info("FC: %s", count)
+        #  self.logger.info(self.switches)
+
     @set_ev_cls(ofp_event.EventOFPAggregateStatsReply, MAIN_DISPATCHER)
     def _flow_stats_reply_handler(self, ev):
         results = ev.msg.body
-        self.logger.info('%s', results)
 
-        #self.curr_count = results.flow_count  # flows in flow table for sample period
+        self.total_packets = results.packet_count
+        self.logger.info('%s', results)
 
         if results.packet_count == 0:  # prevents zero division error
             PPS = results.packet_count / poll  # packets per second = packets / duration | feature (state)
@@ -280,6 +309,13 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             else:
                 self.PIAT = poll / difference
 
+        if results.flow_count == 0:  # prevents zero division error
+            self.use = 0
+        else:
+            self.use = self.curr_count / results.flow_count  # % of flows actively receiving packets
+
+        self.logger.info("Active: %s", self.use)
+
         # Set the first index in the state to PPS
         self.state[0] = PPS
         # Set the third index in the state to PIAT
@@ -290,13 +326,11 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     @set_ev_cls(ofp_event.EventOFPTableStatsReply, MAIN_DISPATCHER)
     def table_stats_reply_handler(self, ev):
 
-        matched_sum = 0  # summation of packets matched in flow table(s)
-        active_sum = 0  # summation of active flows in flow table(s)
         lookup_sum = 0  # summation of packets looked up in flow table(s)
+        matched_sum = 0 # summation of packets matched to existing flow rule entries in flow table(s)
 
         # stat collection
         for stat in ev.msg.body:
-            active_sum += stat.active_count
             lookup_sum += stat.lookup_count
             matched_sum += stat.matched_count
 
@@ -305,19 +339,15 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         else:
             self.hit = matched_sum / lookup_sum  # % of packets matched
 
-        if self.curr_count == 0:  # prevents zero division error
-            self.use = 0
-        else:
-            self.use = active_sum / self.curr_count  # % of flows actively receiving packets
-
-            self.logger.info("Hit: %s", self.hit)
-            self.logger.info("Active: %s", self.use)
+        self.logger.info("Total: %s", self.curr_count)
+        self.logger.info("Hit: %s", self.hit)
+        self.logger.info("Out: %s", self.fr_counter)
 
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
         msg = ev.msg
 
-        self.curr_count -= 1
+        del self.switches[msg.datapath][msg.match]
 
         self.fr_counter += 1  # increase by one every time a flow is removed
 
@@ -356,4 +386,4 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         self.logger.info("time: %s", self.action)
 
-        #self.barrier_reply_handler
+        self.barrier_reply_handler
