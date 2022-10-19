@@ -322,6 +322,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.state[2] = self.PIAT
 
         self.p_count = results.packet_count  # hold value
+        self.logger.info("Total: %s", results.flow_count)
 
     @set_ev_cls(ofp_event.EventOFPTableStatsReply, MAIN_DISPATCHER)
     def table_stats_reply_handler(self, ev):
@@ -339,15 +340,16 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         else:
             self.hit = matched_sum / lookup_sum  # % of packets matched
 
-        self.logger.info("Total: %s", self.curr_count)
         self.logger.info("Hit: %s", self.hit)
         self.logger.info("Out: %s", self.fr_counter)
 
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
         msg = ev.msg
-
-        del self.switches[msg.datapath][msg.match]
+        flow = str(msg.match)
+        
+        if flow in self.switches[msg.datapath.id]:
+            del self.switches[msg.datapath][flow]
 
         self.fr_counter += 1  # increase by one every time a flow is removed
 
