@@ -56,8 +56,8 @@ args = parser.parse_args()
 """
 
 STATE_DIM = 4  # 4-Dimensional State Space: [PPS, avg_fd, PIAT, action]
-ACTION_DIM = 11  # 11-Dimensional Action Space: 0-10
-MAX_ACTION = 10  # 10 is the choice with the highest value available to the agent
+ACTION_DIM = 10  # 10-Dimensional Action Space: 1-10
+MAX_ACTION = 9  # 10 is the choice with the highest value available to the agent
 MAX_EPISODE_STEPS = 50000  # the maximum number of episodes used to train the model
 
 poll = 5
@@ -193,23 +193,23 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
                 # if ICMP Protocol
                 if protocol == in_proto.IPPROTO_ICMP:
-                    match = parser.OFPMatch(in_port=in_port, eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip,
+                    match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, ipv4_src=srcip,
                                             ipv4_dst=dstip,
                                             ip_proto=protocol)
 
                 #  if TCP Protocol
                 elif protocol == in_proto.IPPROTO_TCP:
                     t = pkt.get_protocol(tcp.tcp)
-                    match = parser.OFPMatch(in_port=in_port, eth_type=ether_types.ETH_TYPE_IP, eth_dst=dst, eth_src=src,
+                    match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, eth_dst=dst, eth_src=src,
                                             ipv4_src=srcip, ipv4_dst=dstip,
-                                            ip_proto=protocol, tcp_src=t.src_port, tcp_dst=t.dst_port, )
+                                            ip_proto=protocol,) #tcp_src=t.src_port, tcp_dst=t.dst_port, )
 
                 #  If UDP Protocol
                 elif protocol == in_proto.IPPROTO_UDP:
                     u = pkt.get_protocol(udp.udp)
-                    match = parser.OFPMatch(in_port=in_port, eth_type=ether_types.ETH_TYPE_IP, eth_dst=dst, eth_src=src,
+                    match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, eth_dst=dst, eth_src=src,
                                             ipv4_src=srcip, ipv4_dst=dstip,
-                                            ip_proto=protocol, udp_src=u.src_port, udp_dst=u.dst_port, )
+                                            ip_proto=protocol, ) #udp_src=u.src_port, udp_dst=u.dst_port, )
 
                 # verify if we have a valid buffer_id, if yes avoid to send both
                 # flow_mod & packet_out
@@ -285,7 +285,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 self.switches[ev.msg.datapath.id][flow] = stat.packet_count
                 self.curr_count += 1
 
-        self.logger.info("FC: %s", count)
+        self.logger.info("FC: %s", self.curr_count)
         #  self.logger.info(self.switches)
 
     @set_ev_cls(ofp_event.EventOFPAggregateStatsReply, MAIN_DISPATCHER)
@@ -311,6 +311,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         if results.flow_count == 0:  # prevents zero division error
             self.use = 0
+        elif self.curr_count > results.flow_count: # if flows timeout between the stats reply
+            self.use = results.flow_count / self.curr_count
         else:
             self.use = self.curr_count / results.flow_count  # % of flows actively receiving packets
 
@@ -349,7 +351,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         flow = str(msg.match)
         
         if flow in self.switches[msg.datapath.id]:
-            del self.switches[msg.datapath][flow]
+            del self.switches[msg.datapath.id][flow]
 
         self.fr_counter += 1  # increase by one every time a flow is removed
 
@@ -382,9 +384,9 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.logger.info("Step: %s", self.episode_step)
 
         # Randomly select a new action
-        new_action = np.argmax(self.model.select_action(self.state))
-        if new_action != 0:
-            self.action = new_action
+        new_action = (np.argmax(self.model.select_action(self.state)) + 1)
+
+        self.action = new_action
 
         self.logger.info("time: %s", self.action)
 
