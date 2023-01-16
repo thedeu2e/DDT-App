@@ -1,5 +1,5 @@
 # -----------------------------------------------------------
-# (C) 2022 Nathan Harris, Jr., Greensboro, North Carolina
+# (C) 2023 Nathan Harris, Jr., Greensboro, North Carolina
 # Released under the MIT License (MIT)
 # email ncharris1@aggies.ncat.edu
 # -----------------------------------------------------------
@@ -22,6 +22,7 @@ from ryu.lib.packet import tcp
 from ryu.lib.packet import udp
 
 import numpy as np
+import os
 
 """""
 parser = argparse.ArgumentParser()
@@ -60,7 +61,7 @@ ACTION_DIM = 10  # 10-Dimensional Action Space: 1-10
 MAX_ACTION = 9  # 10 is the choice with the highest value available to the agent
 MAX_EPISODE_STEPS = 50000  # the maximum number of episodes used to train the model
 
-poll = 5
+poll = 10
 
 
 class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
@@ -75,13 +76,15 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.fr_counter = 0  # running total of flows that have been removed from flow table from flow removed
         self.p_count = 0  # previous packet count from flow stats reply
         self.total_packets = 0 # holds total packets in switch at time of polling
+        self.total_frpackets = 0 # holds total of packets that has been removed
         self.total_dur = 0  # running total of duration for flows removed from flow removed message
         self.hit = 0  # percentage of packets matched from table stats reply | outcome (reward)
         self.use = 0  # percentage of active flows from table stats reply | outcome (reward)
         self.PIAT = 0  # packet inter-arrival time from flow stats reply | feature (state)
+        self.avg_PIAT = 0 # average packet inter-arrival time of flows that have timed out | feature (state)
         self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)  # TD3 initialization
-        self.prev_state = np.array([None, None, None, None])  # placeholder for previous state
-        self.state = np.array([None, None, None, None])  # placeholder for current state
+        self.prev_state = np.array([None, None, None, None, None, None])  # placeholder for previous state
+        self.state = np.array([None, None, None, None, None, None])  # placeholder for current state
         self.episode_step = 0  # episode counter initialization
         self.action = 10  # initial action | feature (state)
         self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)  # Replay Buffer initialization
@@ -104,15 +107,17 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
     def _monitor(self):
         self.logger.info("starting flow monitoring thread")
+        
+        counter = 0
 
         while True:
             if self.episode_step == 0:
                 # initialize state and previous state array
-                self.state = np.array([None, 10, None, self.action], dtype=np.float)
-                self.prev_state = np.array([0, 0, 0, self.action])
+                self.state = np.array([None, 10, None, self.action, None, None], dtype=np.float)
+                self.prev_state = np.array([0, 0, 0, self.action, 0, 0])
             else:
                 # Reset the state each time
-                self.state = np.array([None, self.prev_state[1], None, self.action], dtype=np.float)
+                self.state = np.array([None, self.prev_state[1], None, self.action, None, None], dtype=np.float)
 
             # sends stats request to every switch
             for datapath in self.datapaths.values():
@@ -121,6 +126,10 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
             # displays current state of network
             self.logger.info("Current State:%s ", self.state)
+            
+            if counter == 50000:
+                self.model.save("DDTtrained")
+                os.exit
 
             # thread sleeps for new duration selected by agent
             hub.sleep(poll)
@@ -296,18 +305,18 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.logger.info('%s', results)
 
         if results.packet_count == 0:  # prevents zero division error
-            PPS = results.packet_count / poll  # packets per second = packets / duration | feature (state)
+            PPS = results.packet_count / (results.flow_count * 0.002)  # packets per second = packets / duration | feature (state)
             self.PIAT = 0  # no packets arrived
         elif self.p_count == 0:  # if initial reply
-            PPS = results.packet_count / poll
-            self.PIAT = poll / results.packet_count  # packet inter-arrival time = duration / packets
+            PPS = results.packet_count / (results.flow_count * 0.002)
+            self.PIAT = (results.flow_count * 0.002) / results.packet_count  # packet inter-arrival time = duration / packets
         else:
             difference = abs(results.packet_count - self.p_count)  # calculate packet count
-            PPS = difference / poll
+            PPS = difference / (results.flow_count * 0.002)
             if difference == 0:  # prevents zero division error
                 self.PIAT = 0  # no packets arrived
             else:
-                self.PIAT = poll / difference
+                self.PIAT = (results.flow_count * 0.002) / difference
 
         if results.flow_count == 0:  # prevents zero division error
             self.use = 0
@@ -353,13 +362,17 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         if flow in self.switches[msg.datapath.id]:
             del self.switches[msg.datapath.id][flow]
 
-        self.fr_counter += 1  # increase by one every time a flow is removed
+        self.fr_counter += 1  # increment by one every time a flow is removed
+        self.total_frpackets += msg.packet_count # sum of packets transmitted by flows that timeout
 
         self.total_dur += msg.duration_sec  # add the duration of the removed flow to the running total
         self.avg_fd = self.total_dur / self.fr_counter  # duration / flows
+        self.avg_PIAT = self.total_frpackets /self.avg_fd #average PIAT of flows that have timed out
 
         # Set the second index in the state to avg_fd
-        self.state[1] = self.avg_fd
+        self.state[4] = self.avg_fd
+        # Set the third index in the state to PIAT
+        self.state[5] = self.avg_PIAT
 
     def dynamic_timeout(self):
 
@@ -391,3 +404,4 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.logger.info("time: %s", self.action)
 
         self.barrier_reply_handler
+        
