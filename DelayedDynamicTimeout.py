@@ -23,6 +23,7 @@ from ryu.lib.packet import udp
 
 import numpy as np
 import os
+import time
 
 """""
 parser = argparse.ArgumentParser()
@@ -56,12 +57,12 @@ parser.add_argument('--print_log', default=5, type=int)
 args = parser.parse_args()
 """
 
-STATE_DIM = 5  # 4-Dimensional State Space: [PPS, avg_fd, PIAT, action, avg_PIAT]
+STATE_DIM = 5  # 4-Dimensional State Space: [avg_ PI_IAT, avg_fd, PIAT, action, avg_PIAT]
 ACTION_DIM = 10  # 10-Dimensional Action Space: 1-10
 MAX_ACTION = 9  # 10 is the choice with the highest value available to the agent
 MAX_EPISODE_STEPS = 50000  # the maximum number of episodes used to train the model
 
-poll = 10
+poll = 3
 
 
 class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
@@ -81,12 +82,19 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.hit = 0  # percentage of packets matched from table stats reply | outcome (reward)
         self.use = 0  # percentage of active flows from table stats reply | outcome (reward)
         self.PIAT = 0  # packet inter-arrival time from flow stats reply | feature (state)
+        self.avg_PI_IAT = 0 # average packet in message inter-arrival time | feature (state)
         self.avg_PIAT = 0 # average packet inter-arrival time of flows that have timed out | feature (state)
         self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)  # TD3 initialization
         self.prev_state = np.array([None, None, None, None, None])  # placeholder for previous state
         self.state = np.array([None, None, None, None, None])  # placeholder for current state
         self.episode_step = 0  # episode counter initialization
         self.action = 10  # initial action | feature (state)
+        self.holder = 0 # holds value
+        self.t1 = 0 # holds time value 
+        self.t2 = 0 # holds time value
+        self.counter = 0 # total number of packet in request(s)
+        self.difference = 0
+        self.sum = 0 #sum of time differnce
         self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)  # Replay Buffer initialization
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
@@ -104,6 +112,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 self.logger.debug('unregister datapath: %016x', datapath.id)
                 del self.datapaths[datapath.id]
                 del self.switches[datapath.id]
+        
 
     def _monitor(self):
         self.logger.info("starting flow monitoring thread")
@@ -117,7 +126,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 self.prev_state = np.array([0, 0, 0, self.action, 0])
             else:
                 # Reset the state each time
-                self.state = np.array([None, self.prev_state[1], None, self.action, None], dtype=np.float)
+                self.state = np.array([self.prev_state[0], self.prev_state[1], None, self.action, self.prev_state[4]], dtype=np.float)
 
             # sends stats request to every switch
             for datapath in self.datapaths.values():
@@ -126,6 +135,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
             # displays current state of network
             self.logger.info("Current State:%s ", self.state)
+            counter += 1
             
             if counter == 50000:
                 self.model.save("DDTtrained")
@@ -162,6 +172,19 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     @set_ev_cls(ofp_event.EventOFPPacketIn,
                 MAIN_DISPATCHER)  # Using 'MAIN_DISPATCHER' as the second argument means this function is called only after the negotiation completes
     def _packet_in_handler(self, ev):
+        self.t1 = time.perf_counter()
+        self.counter += 1
+        
+        if self.counter > 1:
+            self.sum += (self.t1 - self.t2)
+            self.avg_PI_IAT = (self.sum / self.counter)
+            self.t2 = self.t1
+            
+            # Set the first index in the state to Average PI IAT
+            self.state[0] = self.avg_PI_IAT
+        else:
+            self.t2 = self.t1
+        
         msg = ev.msg  # object that represents a packet_in data structure
         datapath = msg.datapath  # an object that represents a datapath (switch)
         ofproto = datapath.ofproto  # an object that represent the OpenFlow protocol that Ryu and the switch negotiated
@@ -234,6 +257,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
                                   in_port=in_port, actions=actions, data=data)
+        
         datapath.send_msg(out)
 
     def send_barrier_request(self, datapath):
@@ -305,14 +329,11 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.logger.info('%s', results)
 
         if results.packet_count == 0:  # prevents zero division error
-            PPS = results.packet_count / (results.flow_count * 0.002)  # packets per second = packets / duration | feature (state)
             self.PIAT = 0  # no packets arrived
         elif self.p_count == 0:  # if initial reply
-            PPS = results.packet_count / (results.flow_count * 0.002)
             self.PIAT = (results.flow_count * 0.002) / results.packet_count  # packet inter-arrival time = duration / packets
         else:
             difference = abs(results.packet_count - self.p_count)  # calculate packet count
-            PPS = difference / (results.flow_count * 0.002)
             if difference == 0:  # prevents zero division error
                 self.PIAT = 0  # no packets arrived
             else:
@@ -326,9 +347,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             self.use = self.curr_count / results.flow_count  # % of flows actively receiving packets
 
         self.logger.info("Active: %s", self.use)
-
-        # Set the first index in the state to PPS
-        self.state[0] = PPS
         # Set the third index in the state to PIAT
         self.state[2] = self.PIAT
 
@@ -375,9 +393,16 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.state[4] = self.avg_PIAT
 
     def dynamic_timeout(self):
-
+        
         # reward that agent receives for previous action places an emphasis on flows being active
-        reward = (self.use + (self.hit * 0.5)) / 1.5
+        if self.curr_count == self.holder:
+            reward = (self.use + (self.hit * 0.5)) / 1.5
+        elif self.curr_count > self.holder:
+             reward = ((self.use + (self.hit * 0.5)) / 1.5) + 1
+        else:
+             reward = ((self.use + (self.hit * 0.5)) / 1.5) - 1
+                
+        self.holder = self.curr_count
 
         self.logger.info("Reward: %s", reward)
 
@@ -404,4 +429,4 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.logger.info("time: %s", self.action)
 
         self.barrier_reply_handler
- 
+        
