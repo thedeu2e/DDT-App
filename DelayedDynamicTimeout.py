@@ -62,7 +62,7 @@ ACTION_DIM = 10  # 10-Dimensional Action Space: 1-10
 MAX_ACTION = 9  # 10 is the choice with the highest value available to the agent
 MAX_EPISODE_STEPS = 50000  # the maximum number of episodes used to train the model
 
-poll = 3
+poll = 10
 
 
 class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
@@ -93,7 +93,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.t1 = 0 # holds time value 
         self.t2 = 0 # holds time value
         self.counter = 0 # total number of packet in request(s)
-        self.difference = 0
+        self.c2 = 0 # temperarily holds value of packet_in messages per polling period.
+        self.messages = 0 # hold c2 value
         self.sum = 0 #sum of time differnce
         self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)  # Replay Buffer initialization
 
@@ -117,7 +118,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     def _monitor(self):
         self.logger.info("starting flow monitoring thread")
         
-        counter = 0
+        counter = 0 # step counter
 
         while True:
             if self.episode_step == 0:
@@ -172,18 +173,20 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     @set_ev_cls(ofp_event.EventOFPPacketIn,
                 MAIN_DISPATCHER)  # Using 'MAIN_DISPATCHER' as the second argument means this function is called only after the negotiation completes
     def _packet_in_handler(self, ev):
-        self.t1 = time.perf_counter()
-        self.counter += 1
+        self.t1 = time.perf_counter() # record time function is called
+        self.counter += 1 # increase packet in message counter
+        self.c2 += 1
         
-        if self.counter > 1:
-            self.sum += (self.t1 - self.t2)
-            self.avg_PI_IAT = (self.sum / self.counter)
-            self.t2 = self.t1
+        
+        if self.counter > 1: # if the counter has been called more than once
+            self.sum += (self.t1 - self.t2) # subtract the current time from the previous time and add difference to the sum of all differences between function calls
+            self.avg_PI_IAT = (self.sum / self.counter) # divide sum of all differences by total number of calls for average
+            self.t2 = self.t1 # set t2 equal to t1 for next function call
             
-            # Set the first index in the state to Average PI IAT
+            # Set the first index in the state to Average PacketIn inter-arrival time
             self.state[0] = self.avg_PI_IAT
         else:
-            self.t2 = self.t1
+            self.t2 = self.t1 # set t2 equal to t1 for next function call
         
         msg = ev.msg  # object that represents a packet_in data structure
         datapath = msg.datapath  # an object that represents a datapath (switch)
@@ -319,6 +322,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 self.curr_count += 1
 
         self.logger.info("FC: %s", self.curr_count)
+        self.messages = self.c2
+        self.c2 = 0
         #  self.logger.info(self.switches)
 
     @set_ev_cls(ofp_event.EventOFPAggregateStatsReply, MAIN_DISPATCHER)
@@ -385,7 +390,10 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         self.total_dur += msg.duration_sec  # add the duration of the removed flow to the running total
         self.avg_fd = self.total_dur / self.fr_counter  # duration / flows
-        self.avg_PIAT = self.total_frpackets /self.avg_fd #average PIAT of flows that have timed out
+        if self.total_frpackets == 0:
+            self.avg_PIAT = None
+        else:
+            self.avg_PIAT = self.avg_fd / self.total_frpackets #average PIAT of flows that have timed out
 
         # Set the second index in the state to avg_fd
         self.state[1] = self.avg_fd
@@ -395,14 +403,14 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     def dynamic_timeout(self):
         
         # reward that agent receives for previous action places an emphasis on flows being active
-        if self.curr_count == self.holder:
-            reward = (self.use + (self.hit * 0.5)) / 1.5
-        elif self.curr_count > self.holder:
-             reward = ((self.use + (self.hit * 0.5)) / 1.5) + 1
+        if self.messages == self.holder:
+            reward = (((self.use * 0.5)) + self.hit) / 1.5
+        elif self.messages < self.holder:
+             reward = ((((self.use * 0.5)) + self.hit) / 1.5) + 1
         else:
-             reward = ((self.use + (self.hit * 0.5)) / 1.5) - 1
+             reward = ((((self.use * 0.5)) + self.hit) / 1.5) - 1
                 
-        self.holder = self.curr_count
+        self.holder = self.messages
 
         self.logger.info("Reward: %s", reward)
 
@@ -426,7 +434,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         self.action = new_action
 
-        self.logger.info("time: %s", self.action)
+        self.logger.info("timeout value: %s", self.action)
 
         self.barrier_reply_handler
-        
