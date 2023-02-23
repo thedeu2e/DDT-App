@@ -24,6 +24,10 @@ from ryu.lib.packet import udp
 import numpy as np
 import os
 import time
+import random
+
+from cachetools import cached, TTLCache
+from datetime import datetime
 
 """""
 parser = argparse.ArgumentParser()
@@ -60,15 +64,16 @@ args = parser.parse_args()
 STATE_DIM = 5  # 4-Dimensional State Space: [avg_ PI_IAT, avg_fd, PIAT, action, avg_PIAT]
 ACTION_DIM = 10  # 10-Dimensional Action Space: 1-10
 MAX_ACTION = 9  # 10 is the choice with the highest value available to the agent
-MAX_EPISODE_STEPS = 50000  # the maximum number of episodes used to train the model
+MAX_EPISODES = 100  # the maximum number of episodes used to train the model
+MAX_EPISODE_STEPS = 5000 # the maximum number of steps per episode
 
-poll = 10
+poll = 10 # polling incremnts in seconds
 
 
 class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     def __init__(self, *args, **kwargs):
         super(SimpleMonitor13, self).__init__(*args, **kwargs)
-        self.datapaths = {}
+        self.datapaths = {} # list of switches in network
         self.monitor_thread = hub.spawn(self._monitor)
 
         self.switches = {}  # a list of switches within the network to keep track of key:flow rule entries, value:packet count pairs
@@ -87,7 +92,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)  # TD3 initialization
         self.prev_state = np.array([None, None, None, None, None])  # placeholder for previous state
         self.state = np.array([None, None, None, None, None])  # placeholder for current state
-        self.episode_step = 0  # episode counter initialization
+        self.episode = 0 # episode counter intilization
+        self.episode_step = 0  # episode step counter initialization
         self.action = 10  # initial action | feature (state)
         self.holder = 0 # holds value
         self.t1 = 0 # holds time value 
@@ -97,6 +103,14 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.messages = 0 # hold c2 value
         self.sum = 0 #sum of time differnce
         self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)  # Replay Buffer initialization
+        self.cache = TTLCache(maxsize=100, ttl=20) # cache where each item is accessbile for 10s
+        self.r = 0 # value for reward function
+        self.total_pi = 0 # total count of packet_in messages
+        
+        # EXPLORATION HYPERPARAMETERS for epsilon and epsilon greedy strategy
+        self.epsilon = 1.0 # exploration probability at start
+        self.epsilon_min = 0.01 # minimum exploration probability
+        self.epsilon_decay = 0.0005 # exponential decay rate for exploration prob
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -117,33 +131,36 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
     def _monitor(self):
         self.logger.info("starting flow monitoring thread")
-        
-        counter = 0 # step counter
 
         while True:
-            if self.episode_step == 0:
-                # initialize state and previous state array
-                self.state = np.array([None, 10, None, self.action, None], dtype=np.float)
-                self.prev_state = np.array([0, 0, 0, self.action, 0])
-            else:
-                # Reset the state each time
-                self.state = np.array([self.prev_state[0], self.prev_state[1], None, self.action, self.prev_state[4]], dtype=np.float)
-
-            # sends stats request to every switch
-            for datapath in self.datapaths.values():
-                self._request_stats(datapath)
-                self.send_barrier_request(datapath)
-
-            # displays current state of network
-            self.logger.info("Current State:%s ", self.state)
-            counter += 1
             
-            if counter == 50000:
-                self.model.save("DDTtrained")
-                os.exit
+            while self.episode < MAX_EPISODES:
+                self.episode_step = 0
+                
+                while self.episode_step < MAX_EPISODE_STEPS:
+                    if self.episode_step == 0:
+                        # initialize state and previous state array
+                        self.state = np.array([None, 10, None, self.action, None], dtype=np.float)
+                        self.prev_state = np.array([0, 0, 0, self.action, 0])
+                    else:
+                        # Reset the state each time
+                        self.state = np.array([self.prev_state[0], self.prev_state[1], None, self.action, self.prev_state[4]], dtype=np.float)
 
-            # thread sleeps for new duration selected by agent
-            hub.sleep(poll)
+                    # sends stats request to every switch
+                    for datapath in self.datapaths.values():
+                        self._request_stats(datapath)
+                        self.send_barrier_request(datapath)
+
+                    # displays current state of network
+                    self.logger.info("Current State:%s ", self.state)
+                    
+                    # thread sleeps for new duration selected by agent
+                    hub.sleep(poll)
+                    
+                self.episode += 1
+
+            self.model.save("DDTtrained")
+            os.exit
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -173,6 +190,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     @set_ev_cls(ofp_event.EventOFPPacketIn,
                 MAIN_DISPATCHER)  # Using 'MAIN_DISPATCHER' as the second argument means this function is called only after the negotiation completes
     def _packet_in_handler(self, ev):
+        self.total_pi += 1 # sum of packet_in messages during polling period
         self.t1 = time.perf_counter() # record time function is called
         self.counter += 1 # increase packet in message counter
         self.c2 += 1
@@ -245,6 +263,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                     match = parser.OFPMatch(eth_type=ether_types.ETH_TYPE_IP, eth_dst=dst, eth_src=src,
                                             ipv4_src=srcip, ipv4_dst=dstip,
                                             ip_proto=protocol, ) #udp_src=u.src_port, udp_dst=u.dst_port, )
+                    
 
                 # verify if we have a valid buffer_id, if yes avoid to send both
                 # flow_mod & packet_out
@@ -253,6 +272,15 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                     return
                 else:
                     self.add_flow(datapath, 1, match, actions)
+                    
+                flow = str(match) # create key
+                
+                if flow not in self.cache: # search for key in cache
+                    self.cache[flow] = flow # if the flow isn't in the cache, add it
+                    self.r += 1
+                else:
+                    self.r -= 1 # if the flow is in the cahce and has to be added again, then the impact is negative
+                    
 
         data = None
         if msg.buffer_id == ofproto.OFP_NO_BUFFER:
@@ -375,7 +403,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             self.hit = matched_sum / lookup_sum  # % of packets matched
 
         self.logger.info("Hit: %s", self.hit)
-        self.logger.info("Out: %s", self.fr_counter)
 
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
@@ -399,22 +426,21 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.state[1] = self.avg_fd
         # Set the third index in the state to PIAT
         self.state[4] = self.avg_PIAT
+        
+        #self.logger.info("Out: %s", self.fr_counter)
 
     def dynamic_timeout(self):
         
-        # reward that agent receives for previous action places an emphasis on flows being active
-        if self.messages == self.holder:
-            reward = (((self.use * 0.5)) + self.hit) / 1.5
-        elif self.messages < self.holder:
-             reward = ((((self.use * 0.5)) + self.hit) / 1.5) + 1
-        else:
-             reward = ((((self.use * 0.5)) + self.hit) / 1.5) - 1
+        pin = self.r / self.total_pi # packet_in messages for new  flows divided by the total
+        
+        reward = ((self.use * 0.50) + (self.hit * 0.50) + pin ) / 2.0
                 
-        self.holder = self.messages
+        self.r = 0
+        self.total_pi = 0
 
         self.logger.info("Reward: %s", reward)
 
-        done_bool = 1 if self.episode_step < MAX_EPISODE_STEPS else 0
+        done_bool = 1 if self.episode < MAX_EPISODES else 0
 
         self.replay_buffer.add(self.prev_state, self.action, self.state, reward, done_bool)
 
@@ -427,10 +453,19 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         # increase episode counter
         self.episode_step += 1
-        self.logger.info("Step: %s", self.episode_step)
+        self.logger.info("Episode: %s Step: %s", self.episode, self.episode_step)
 
         # Randomly select a new action
-        new_action = (np.argmax(self.model.select_action(self.state)) + 1)
+        explore_probability = self.epsilon_min + (self.epsilon - self.epsilon_min) * np.exp(-self.epsilon_decay * self.episode_step)
+
+        if explore_probability > np.random.rand():
+            # Make a random action (exploration)
+            new_action = (random.randrange(ACTION_DIM)+1) 
+        else:
+            # Get action from Q-network (exploitation)
+            # Estimate the Qs values state
+            # Take the biggest Q value (= the best action)
+            new_action = (np.argmax(self.model.select_action(self.state)) + 1)
 
         self.action = new_action
 
