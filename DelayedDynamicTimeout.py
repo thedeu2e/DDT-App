@@ -431,7 +431,10 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
     def dynamic_timeout(self):
         
-        pin = self.r / self.total_pi # packet_in messages for new  flows divided by the total
+        if self.total_pi !=0:
+            pin = self.r / self.total_pi # packet_in messages for new  flows divided by the total
+        else:
+            pin = 0
         
         reward = ((self.use * 0.50) + (self.hit * 0.50) + pin ) / 2.0
                 
