@@ -1,5 +1,5 @@
 # RL-Ryu-App
-This repository is centered around creating an easily undrestandable, customizable Ryu Controller application for SDN to facilitate research utlizing reinforcement learning for autonomous applications in software defined networks.
+This repository is centered around creating an easily undrestandable, customizable Ryu Controller application for SDN to facilitate research utlizing reinforcement learning for autonomous applications in software defined networks. I have modifed the code from the repository https://github.com/stainleebakhla/mininet-flow-generator to use MGEN istead of iPerf to simulate realistic traffic traits.
 
 ## Getting Started
 Clone the repository
