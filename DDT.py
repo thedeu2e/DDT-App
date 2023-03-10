@@ -129,7 +129,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     def _monitor(self):
         self.logger.info("starting flow monitoring thread")
         
-        self.model.load("DDTtrained")
+        self.trainedModel = self.model.load("DDTtrained")
 
         while True:
             
