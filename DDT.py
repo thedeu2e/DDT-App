@@ -442,32 +442,18 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         self.logger.info("Reward: %s", reward)
 
-        done_bool = 1 if self.episode < MAX_EPISODES else 0
-
-        self.replay_buffer.add(self.prev_state, self.action, self.state, reward, done_bool)
-
-        self.model.train(self.replay_buffer)
-
-        # self.logger.info("Previous State%s", self.prev_state)
-
         # set previous state equal to current state for replay value in next iteration
         self.prev_state = self.state
 
         # increase episode counter
-        self.episode_step += 1
+      
         self.logger.info("Episode: %s Step: %s", self.episode, self.episode_step)
 
-        # Randomly select a new action
-        explore_probability = self.epsilon_min + (self.epsilon - self.epsilon_min) * np.exp(-self.epsilon_decay * self.episode_step)
-
-        if explore_probability > np.random.rand():
-            # Make a random action (exploration)
-            new_action = (random.randrange(ACTION_DIM)+1) 
-        else:
-            # Get action from Q-network (exploitation)
-            # Estimate the Qs values state
-            # Take the biggest Q value (= the best action)
-            new_action = (np.argmax(self.model.select_action(self.state)) + 1)
+    
+        # Get action from Q-network (exploitation)
+        # Estimate the Qs values state
+        # Take the biggest Q value (= the best action)
+        new_action = (np.argmax(self.model.select_action(self.state)) + 1)
 
         self.action = new_action
 
