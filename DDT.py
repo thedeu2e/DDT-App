@@ -131,35 +131,18 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         
         self.trainedModel = self.model.load("DDTtrained")
 
-        while True:
-            
-            while self.episode < MAX_EPISODES:
-                self.episode_step = 0
-                
-                while self.episode_step < MAX_EPISODE_STEPS:
-                    if self.episode_step == 0:
-                        # initialize state and previous state array
-                        self.state = np.array([None, 10, None, self.action, None], dtype=np.float)
-                        self.prev_state = np.array([0, 0, 0, self.action, 0])
-                    else:
-                        # Reset the state each time
-                        self.state = np.array([self.prev_state[0], self.prev_state[1], None, self.action, self.prev_state[4]], dtype=np.float)
+        while True:           
+             # sends stats request to every switch
+             for datapath in self.datapaths.values():
+             self._request_stats(datapath)
+             self.send_barrier_request(datapath)
 
-                    # sends stats request to every switch
-                    for datapath in self.datapaths.values():
-                        self._request_stats(datapath)
-                        self.send_barrier_request(datapath)
-
-                    # displays current state of network
-                    self.logger.info("Current State:%s ", self.state)
+             # displays current state of network
+             self.logger.info("Current State:%s ", self.state)
                     
-                    # thread sleeps for new duration selected by agent
-                    hub.sleep(poll)
-                    
-                self.episode += 1
-
-            self.model.save("DDTtrained")
-            os.exit
+             # thread sleeps for new duration selected by agent
+             hub.sleep(poll)
+           
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -277,8 +260,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 if flow not in self.cache: # search for key in cache
                     self.cache[flow] = flow # if the flow isn't in the cache, add it
                     self.r += 1
-                else:
-                    self.r -= 1 # if the flow is in the cahce and has to be added again, then the impact is negative
+                #else:
+                    #self.r -= 1 # if the flow is in the cahce and has to be added again, then the impact is negative
                     
 
         data = None
@@ -443,17 +426,17 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.logger.info("Reward: %s", reward)
 
         # set previous state equal to current state for replay value in next iteration
-        self.prev_state = self.state
+        #self.prev_state = self.state
 
         # increase episode counter
       
-        self.logger.info("Episode: %s Step: %s", self.episode, self.episode_step)
+        #self.logger.info("Episode: %s Step: %s", self.episode, self.episode_step)
 
     
         # Get action from Q-network (exploitation)
         # Estimate the Qs values state
         # Take the biggest Q value (= the best action)
-        new_action = (np.argmax(self.model.select_action(self.state)) + 1)
+        new_action = (np.argmax(self.trainedModel.select_action(self.state)) + 1)
 
         self.action = new_action
 
