@@ -64,7 +64,7 @@ MAX_ACTION = 9  # 10 is the choice with the highest value available to the agent
 MAX_EPISODES = 100  # the maximum number of episodes used to train the model
 MAX_EPISODE_STEPS = 5000 # the maximum number of steps per episode
 
-poll = 10 # polling incremnts in seconds
+poll = 5 # polling incremnts in seconds
 
 
 class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
@@ -131,17 +131,17 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         
         self.trainedModel = self.model.load("DDTtrained")
 
-        while True:           
-             # sends stats request to every switch
-             for datapath in self.datapaths.values():
-             self._request_stats(datapath)
-             self.send_barrier_request(datapath)
-
-             # displays current state of network
-             self.logger.info("Current State:%s ", self.state)
-                    
-             # thread sleeps for new duration selected by agent
-             hub.sleep(poll)
+        while True:
+            # sends stats request to every switch
+            for datapath in self.datapaths.values():
+                self._request_stats(datapath)
+                self.send_barrier_request(datapath)
+                
+            # displays current state of network
+            self.logger.info("Current State:%s ", self.state)
+            
+            # thread sleeps for new duration selected by agent
+            hub.sleep(poll)
            
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
