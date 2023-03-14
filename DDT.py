@@ -104,6 +104,14 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.r = 0 # value for reward function
         self.total_pi = 0 # total count of packet_in messages
         
+        # Evaluation
+        self.tp = 0 # total count of packet_in messages
+        self.tpp = 0 # total count of polling periods
+        self.tr = 0 # total sum of rewards
+        self.ta = 0 # total sum of active rate percentage
+        self.avg_reward = 0 # average reward = sum of rewards / total count of polling periods
+        self.avg_active = 0 # average percentage of active flows = active rate / total count of polling periods
+        
         # EXPLORATION HYPERPARAMETERS for epsilon and epsilon greedy strategy
         self.epsilon = 1.0 # exploration probability at start
         self.epsilon_min = 0.01 # minimum exploration probability
@@ -132,6 +140,9 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.trainedModel = self.model.load("DDTtrained")
 
         while True:
+            #increment polling period
+            self.tpp += 1
+            
             # sends stats request to every switch
             for datapath in self.datapaths.values():
                 self._request_stats(datapath)
@@ -173,6 +184,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 MAIN_DISPATCHER)  # Using 'MAIN_DISPATCHER' as the second argument means this function is called only after the negotiation completes
     def _packet_in_handler(self, ev):
         self.total_pi += 1 # sum of packet_in messages during polling period
+        self.tp += 1 # sum of packet_in messages
         self.t1 = time.perf_counter() # record time function is called
         self.counter += 1 # increase packet in message counter
         self.c2 += 1
@@ -419,11 +431,18 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             pin = 0
         
         reward = ((self.use * 0.50) + (self.hit * 0.50) + pin ) / 2.0
-                
+        
+        self.tr += reward
+        self.ta += self.use
+        self.avg_reward = (self.tr/self.tpp)
+        self.avg_active = (self.ta/self.tpp)
+
         self.r = 0
         self.total_pi = 0
-
-        self.logger.info("Reward: %s", reward)
+        
+        self.logger.info("Average Active Rate: %s", self.avg_active)
+        self.logger.info("Average Reward: %s", self.avg_reward)
+        self.logger.info("Total Packet_In: %s", self.tp)
 
         # set previous state equal to current state for replay value in next iteration
         #self.prev_state = self.state
