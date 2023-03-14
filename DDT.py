@@ -74,6 +74,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.monitor_thread = hub.spawn(self._monitor)
 
         self.switches = {}  # a list of switches within the network to keep track of key:flow rule entries, value:packet count pairs
+        self.action = 10 # initial timeout value
         self.avg_fd = 0  # average flow duration from flow removed message | feature (state)
         self.curr_count = 0  # current number of flows in flow table from table stats reply
         self.fr_counter = 0  # running total of flows that have been removed from flow table from flow removed
@@ -87,8 +88,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.avg_PI_IAT = 0 # average packet in message inter-arrival time | feature (state)
         self.avg_PIAT = 0 # average packet inter-arrival time of flows that have timed out | feature (state)
         self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)  # TD3 initialization
-        self.prev_state = np.array([None, None, None, None, None])  # placeholder for previous state
-        self.state = np.array([None, None, None, None, None])  # placeholder for current state
+        self.prev_state = np.array([0, 0, 0, self.action, 0], dtype=np.float)  # placeholder for previous state
+        self.state = np.array([None, None, None, None, None], dtype=np.float)  # placeholder for current state
         self.episode = 0 # episode counter intilization
         self.episode_step = 0  # episode step counter initialization
         self.action = 10  # initial action | feature (state)
@@ -137,11 +138,14 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     def _monitor(self):
         self.logger.info("starting flow monitoring thread")
         
-        self.trainedModel = self.model.load("DDTtrained")
+        self.model.load("DDTtrained")
 
         while True:
             #increment polling period
             self.tpp += 1
+            
+            # Reset the state each time
+            self.state = np.array([self.prev_state[0], self.prev_state[1], None, self.action, self.prev_state[4]], dtype=np.float)
             
             # sends stats request to every switch
             for datapath in self.datapaths.values():
@@ -273,7 +277,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                     self.cache[flow] = flow # if the flow isn't in the cache, add it
                     self.r += 1
                 #else:
-                    #self.r -= 1 # if the flow is in the cahce and has to be added again, then the impact is negative
+                    self.r -= 1 # if the flow is in the cahce and has to be added again, then the impact is negative
                     
 
         data = None
@@ -445,7 +449,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.logger.info("Total Packet_In: %s", self.tp)
 
         # set previous state equal to current state for replay value in next iteration
-        #self.prev_state = self.state
+        self.prev_state = self.state
 
         # increase episode counter
       
@@ -455,7 +459,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         # Get action from Q-network (exploitation)
         # Estimate the Qs values state
         # Take the biggest Q value (= the best action)
-        new_action = (np.argmax(self.trainedModel.select_action(self.state)) + 1)
+        new_action = (np.argmax(self.model.select_action(self.state)) + 1)
 
         self.action = new_action
 
