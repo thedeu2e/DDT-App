@@ -26,8 +26,10 @@ import numpy as np
 import os
 import time
 import random
+
 from cachetools import cached, TTLCache
 
+# TD3 model paramters
 STATE_DIM = 5  # 4-Dimensional State Space: [avg_PI_IAT, avg_fd, PIAT, action, avg_PIAT]
 ACTION_DIM = 10  # 10-Dimensional Action Space: 1-10
 MAX_ACTION = 9  # 10 is the choice with the highest value available to the agent
@@ -64,7 +66,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.action = 10  # timeout value | feature (state)
         self.counter = 0 # total number of packet in request(s)
         self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)  # Replay Buffer initialization
-        self.cache = TTLCache(maxsize=100, ttl=20) # cache where each item is accessbile for 10s
+        self.cache = TTLCache(maxsize=1000, ttl=20) # cache where each item is accessbile for 20s
         self.misses = 0 # table misses
         self.difference = 0 # sum of packet in interarrival time diffrence
         self.total_pi = 0 # total count of packet_in messages
@@ -125,7 +127,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                
                 self.episode += 1
 
-            self.model.save("DDTtrained2")
+            self.model.save("DDTtrained")
             # os._exit()
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -420,8 +422,10 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 new_action = (np.argmax(self.model.select_action(self.state)) + 1)
 
             self.action = new_action
+            
+            # increment mini-ep
+            self.miniep += 1
 
             self.logger.info("timeout value: %s", self.action)
 
         self.barrier_reply_handler
-        
