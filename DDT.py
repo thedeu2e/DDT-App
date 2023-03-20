@@ -27,37 +27,9 @@ import time
 import random
 
 from cachetools import cached, TTLCache
-from datetime import datetime
 
-"""""
-parser = argparse.ArgumentParser()
-parser.add_argument('--mode', default='train', type=str) # mode = 'train' or 'test'
-parser.add_argument('--tau',  default=0.005, type=float) # target smoothing coefficient
-parser.add_argument('--target_update_interval', default=1, type=int)
-parser.add_argument('--iteration', default=5, type=int)
-parser.add_argument('--learning_rate', default=3e-4, type=float)
-parser.add_argument('--gamma', default=0.99, type=int) # discounted factor
-parser.add_argument('--capacity', default=50000, type=int) # replay buffer size
-parser.add_argument('--num_iteration', default=100000, type=int) #  num of  games
-parser.add_argument('--batch_size', default=100, type=int) # mini batch size
-parser.add_argument('--seed', default=1, type=int)
-# optional parameters
-parser.add_argument('--num_hidden_layers', default=2, type=int)
-parser.add_argument('--sample_frequency', default=256, type=int)
-parser.add_argument('--activation', default='Relu', type=str)
-parser.add_argument('--render', default=False, type=bool) # show UI or not
-parser.add_argument('--log_interval', default=50, type=int) #
-parser.add_argument('--load', default=False, type=bool) # load model
-parser.add_argument('--render_interval', default=100, type=int) # after render_interval, the env.render() will work
-parser.add_argument('--policy_noise', default=0.2, type=float)
-parser.add_argument('--noise_clip', default=0.5, type=float)
-parser.add_argument('--policy_delay', default=2, type=int)
-parser.add_argument('--exploration_noise', default=0.1, type=float)
-parser.add_argument('--max_episode', default=2000, type=int)
-parser.add_argument('--print_log', default=5, type=int)
-args = parser.parse_args()
-"""
 
+# TD3 model paramters
 STATE_DIM = 5  # 4-Dimensional State Space: [avg_ PI_IAT, avg_fd, PIAT, action, avg_PIAT]
 ACTION_DIM = 10  # 10-Dimensional Action Space: 1-10
 MAX_ACTION = 9  # 10 is the choice with the highest value available to the agent
@@ -74,7 +46,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.monitor_thread = hub.spawn(self._monitor)
 
         self.switches = {}  # a list of switches within the network to keep track of key:flow rule entries, value:packet count pairs
-        self.action = 10 # initial timeout value
         self.avg_fd = 0  # average flow duration from flow removed message | feature (state)
         self.curr_count = 0  # current number of flows in flow table from table stats reply
         self.fr_counter = 0  # running total of flows that have been removed from flow table from flow removed
@@ -85,25 +56,22 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.hit = 0  # percentage of packets matched from table stats reply | outcome (reward)
         self.use = 0  # percentage of active flows from table stats reply | outcome (reward)
         self.PIAT = 0  # packet inter-arrival time from flow stats reply | feature (state)
-        self.avg_PI_IAT = 0 # average packet in message inter-arrival time | feature (state)
+        self.avg_PI_IAT = 0 # average packet in message inter-arrival time of misses | feature (state)
         self.avg_PIAT = 0 # average packet inter-arrival time of flows that have timed out | feature (state)
         self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)  # TD3 initialization
-        self.prev_state = np.array([0, 0, 0, self.action, 0], dtype=np.float)  # placeholder for previous state
-        self.state = np.array([None, None, None, None, None], dtype=np.float)  # placeholder for current state
+        self.prev_state = np.array([None, None, None, None, None])  # placeholder for previous state
+        self.state = np.array([None, None, None, None, None])  # placeholder for current state
         self.episode = 0 # episode counter intilization
         self.episode_step = 0  # episode step counter initialization
-        self.action = 10  # initial action | feature (state)
-        self.holder = 0 # holds value
-        self.t1 = 0 # holds time value 
-        self.t2 = 0 # holds time value
+        self.action = 10  # timeout value | feature (state)
         self.counter = 0 # total number of packet in request(s)
-        self.c2 = 0 # temperarily holds value of packet_in messages per polling period.
-        self.messages = 0 # hold c2 value
-        self.sum = 0 #sum of time differnce
         self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)  # Replay Buffer initialization
-        self.cache = TTLCache(maxsize=100, ttl=20) # cache where each item is accessbile for 10s
-        self.r = 0 # value for reward function
+        self.cache = TTLCache(maxsize=1000, ttl=20) # cache where each item is accessbile for 10s
+        self.misses = 0 # table misses
+        self.difference = 0 # sum of packet in interarrival time diffrence
         self.total_pi = 0 # total count of packet_in messages
+        
+        self.miniep = 0  # miniepisodes
         
         # Evaluation
         self.tp = 0 # total count of packet_in messages
@@ -112,11 +80,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.ta = 0 # total sum of active rate percentage
         self.avg_reward = 0 # average reward = sum of rewards / total count of polling periods
         self.avg_active = 0 # average percentage of active flows = active rate / total count of polling periods
-        
-        # EXPLORATION HYPERPARAMETERS for epsilon and epsilon greedy strategy
-        self.epsilon = 1.0 # exploration probability at start
-        self.epsilon_min = 0.01 # minimum exploration probability
-        self.epsilon_decay = 0.0005 # exponential decay rate for exploration prob
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -189,20 +152,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     def _packet_in_handler(self, ev):
         self.total_pi += 1 # sum of packet_in messages during polling period
         self.tp += 1 # sum of packet_in messages
-        self.t1 = time.perf_counter() # record time function is called
-        self.counter += 1 # increase packet in message counter
-        self.c2 += 1
-        
-        
-        if self.counter > 1: # if the counter has been called more than once
-            self.sum += (self.t1 - self.t2) # subtract the current time from the previous time and add difference to the sum of all differences between function calls
-            self.avg_PI_IAT = (self.sum / self.counter) # divide sum of all differences by total number of calls for average
-            self.t2 = self.t1 # set t2 equal to t1 for next function call
-            
-            # Set the first index in the state to Average PacketIn inter-arrival time
-            self.state[0] = self.avg_PI_IAT
-        else:
-            self.t2 = self.t1 # set t2 equal to t1 for next function call
         
         msg = ev.msg  # object that represents a packet_in data structure
         datapath = msg.datapath  # an object that represents a datapath (switch)
@@ -274,10 +223,20 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 flow = str(match) # create key
                 
                 if flow not in self.cache: # search for key in cache
-                    self.cache[flow] = flow # if the flow isn't in the cache, add it
-                    self.r += 1
-                #else:
-                    self.r -= 1 # if the flow is in the cahce and has to be added again, then the impact is negative
+                    self.cache[flow] = time.time() # if the flow isn't in the cache, add it
+                else:
+                    now = time.time()
+                    self.difference += now - self.cache[flow]
+                    self.cache[flow] = now
+                    self.misses += 1 # if the flow is in the cahce and has to be added again, then the impact is negative
+        
+        if self.misses != 0:
+            self.avg_PI_IAT = (self.difference/self.misses)
+        else:
+            self.avg_PI_IAT = 0
+        
+        # Set the first index in the state to Average PacketIn inter-arrival time
+        self.state[0] = self.avg_PI_IAT
                     
 
         data = None
@@ -322,12 +281,9 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                                                 cookie, cookie_mask,
                                                 match)
 
-        table = parser.OFPTableStatsRequest(datapath, 0)
-
         # synchronize requests & replies so that thread waits for updates
         ofctl_api.send_msg(self, flow, reply_cls=parser.OFPFlowStatsReply, reply_multi=True)
         ofctl_api.send_msg(self, flows, reply_cls=parser.OFPAggregateStatsReply, reply_multi=True)
-        ofctl_api.send_msg(self, table, reply_cls=parser.OFPTableStatsReply, reply_multi=True)
 
         # Once all features are no longer set to None, fit our model on the sample
         self.dynamic_timeout()
@@ -348,8 +304,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 self.curr_count += 1
 
         self.logger.info("FC: %s", self.curr_count)
-        self.messages = self.c2
-        self.c2 = 0
         #  self.logger.info(self.switches)
 
     @set_ev_cls(ofp_event.EventOFPAggregateStatsReply, MAIN_DISPATCHER)
@@ -384,24 +338,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.p_count = results.packet_count  # hold value
         self.logger.info("Total: %s", results.flow_count)
 
-    @set_ev_cls(ofp_event.EventOFPTableStatsReply, MAIN_DISPATCHER)
-    def table_stats_reply_handler(self, ev):
-
-        lookup_sum = 0  # summation of packets looked up in flow table(s)
-        matched_sum = 0 # summation of packets matched to existing flow rule entries in flow table(s)
-
-        # stat collection
-        for stat in ev.msg.body:
-            lookup_sum += stat.lookup_count
-            matched_sum += stat.matched_count
-
-        if lookup_sum == 0:  # prevents zero division error
-            self.hit = 0
-        else:
-            self.hit = matched_sum / lookup_sum  # % of packets matched
-
-        self.logger.info("Hit: %s", self.hit)
-
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
         msg = ev.msg
@@ -430,20 +366,24 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     def dynamic_timeout(self):
         
         if self.total_pi !=0:
-            pin = self.r / self.total_pi # packet_in messages for new  flows divided by the total
+            self.hit = 1-(self.misses / self.total_pi) # % of flows for previously installed rules divided by the total during polling period
+        elif self.misses !=0:
+            self.hit = 0
         else:
-            pin = 0
+            self.hit = 1
+
+        self.logger.info("Hit: %s", self.hit)
         
-        reward = ((self.use * 0.50) + (self.hit * 0.50) + pin ) / 2.0
+        reward = ((self.use * 0.50) + (self.hit)) / 1.5
         
         self.tr += reward
         self.ta += self.use
         self.avg_reward = (self.tr/self.tpp)
         self.avg_active = (self.ta/self.tpp)
-
-        self.r = 0
+                
+        self.misses = 0
         self.total_pi = 0
-        
+
         self.logger.info("Average Active Rate: %s", self.avg_active)
         self.logger.info("Average Reward: %s", self.avg_reward)
         self.logger.info("Total Packet_In: %s", self.tp)
@@ -451,18 +391,13 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         # set previous state equal to current state for replay value in next iteration
         self.prev_state = self.state
 
-        # increase episode counter
-      
-        #self.logger.info("Episode: %s Step: %s", self.episode, self.episode_step)
-
-    
         # Get action from Q-network (exploitation)
         # Estimate the Qs values state
         # Take the biggest Q value (= the best action)
         new_action = (np.argmax(self.model.select_action(self.state)) + 1)
 
         self.action = new_action
-
+        
         self.logger.info("timeout value: %s", self.action)
 
         self.barrier_reply_handler
