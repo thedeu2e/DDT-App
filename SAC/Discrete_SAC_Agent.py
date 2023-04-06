@@ -42,7 +42,7 @@ class SACAgent:
 
         self.replay_buffer = ReplayBuffer(self.environment)
 
-        self.target_entropy = 0.98 * -np.log(1 / self.environment.action_space.n)
+        self.target_entropy = 0.98 * -np.log(1 / action_dim)
         self.log_alpha = torch.tensor(np.log(self.ALPHA_INITIAL), requires_grad=True)
         self.alpha = self.log_alpha
         self.alpha_optimiser = torch.optim.Adam([self.log_alpha], lr=self.LEARNING_RATE)
