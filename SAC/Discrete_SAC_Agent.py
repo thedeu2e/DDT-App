@@ -13,10 +13,12 @@ class SACAgent:
     LEARNING_RATE = 10 ** -4
     SOFT_UPDATE_INTERPOLATION_FACTOR = 0.01
 
-    def __init__(self, environment):
-        self.environment = environment
-        self.state_dim = self.environment.observation_space.shape[0]
-        self.action_dim = self.environment.action_space.n
+    def __init__(self,
+                 state_dim,
+                 action_dim):
+        
+        self.state_dim = state_dim
+        self.action_dim = action_dim
         self.critic_local = Network(input_dimension=self.state_dim,
                                     output_dimension=self.action_dim)
         self.critic_local2 = Network(input_dimension=self.state_dim,
