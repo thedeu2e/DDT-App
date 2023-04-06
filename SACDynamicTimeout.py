@@ -12,7 +12,6 @@ from ryu.controller.handler import MAIN_DISPATCHER, DEAD_DISPATCHER, CONFIG_DISP
 from ryu.controller.handler import set_ev_cls
 from ryu.lib import hub
 from ryu.lib.packet import packet, ethernet, ether_types
-from TD3 import TD3, utils
 
 # required for Layer 4 matching
 from ryu.lib.packet import in_proto
@@ -27,12 +26,16 @@ import os
 import time
 import random
 
+# discrete soft-actor-critic
+from SAC import Discrete_SAC_Agent, utilities
+
+# required for cache implementation
 from cachetools import cached, TTLCache
 
-# TD3 Model Parameters
+# SAC Model Parameters
 STATE_DIM = 5  # 4-Dimensional State Space: [avg_PI_IAT, avg_fd, PIAT, action, avg_PIAT]
 ACTION_DIM = 10  # 10-Dimensional Action Space: 1-10
-MAX_ACTION = 1  # 10 is the choice with the highest value available to the agent
+MAX_ACTION = 1  # 1.00 is the highest reward an action can achieve
 MAX_EPISODES = 1000  # the maximum number of episodes used to train the model (300 second episodes * 1000 episdoes = 300,000 duration / 5 polling periods = 60,000 training steps)
 MAX_EPISODE_STEPS = 14 # the maximum number of steps per episode (600 seconds/20 send polling intervals)
 
@@ -58,18 +61,20 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.PIAT = 0  # packet inter-arrival time from flow stats reply | feature (state)
         self.avg_PI_IAT = 0 # average packet in message inter-arrival time of misses | feature (state)
         self.avg_PIAT = 0 # average packet inter-arrival time of flows that have timed out | feature (state)
-        self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)  # TD3 initialization
-        self.prev_state = np.array([None, None, None, None, None])  # placeholder for previous state
-        self.state = np.array([None, None, None, None, None])  # placeholder for current state
         self.episode = 0 # episode counter intilization
         self.episode_step = 0  # episode step counter initialization
         self.action = 10  # timeout value | feature (state)
         self.counter = 0 # total number of packet in request(s)
-        self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)  # Replay Buffer initialization
         self.cache = TTLCache(maxsize=1000, ttl=20) # cache where each item is accessbile for 10s
         self.misses = 0 # table misses
         self.difference = 0 # sum of packet in interarrival time diffrence
         self.total_pi = 0 # total count of packet_in messages
+        
+        # Algorithm Specific initialization
+        self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)  # TD3 initialization
+        self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)  # Replay Buffer initialization
+        self.prev_state = np.array([None, None, None, None, None])  # placeholder for previous state
+        self.state = np.array([None, None, None, None, None])  # placeholder for current state
         
         self.miniep = 0  # miniepisodes
         self.decay_step = 0 # decay step
