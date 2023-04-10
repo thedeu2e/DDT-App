@@ -71,7 +71,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.total_pi = 0 # total count of packet_in messages
         
         # Algorithm Specific initialization
-        self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)  # TD3 initialization
+        self.model = Discrete_SAC_Agent.SAC_Agent(STATE_DIM, ACTION_DIM)  # SAC initialization
         self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)  # Replay Buffer initialization
         self.prev_state = np.array([None, None, None, None, None])  # placeholder for previous state
         self.state = np.array([None, None, None, None, None])  # placeholder for current state
