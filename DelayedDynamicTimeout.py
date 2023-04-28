@@ -24,17 +24,17 @@ from ryu.lib.packet import udp
 # required for misc. aspects of program
 import numpy as np
 import os
-import time
 import random
+from datetime import datetime
 
 from cachetools import cached, TTLCache
 
-# TD3 model paramters
-STATE_DIM = 5  # 4-Dimensional State Space: [avg_PI_IAT, avg_fd, PIAT, action, avg_PIAT]
+# TD3 Model Parameters
+STATE_DIM = 5  # 4-Dimensional State Space: [avg_PI_IAT, avg_fd, Inactive, action, misses]
 ACTION_DIM = 10  # 10-Dimensional Action Space: 1-10
 MAX_ACTION = 9  # 10 is the choice with the highest value available to the agent
-MAX_EPISODES = 1000  # the maximum number of episodes used to train the model (600 second episodes * 1000 episdoes = 60,000 = 120,00 training steps)
-MAX_EPISODE_STEPS = 30 # the maximum number of steps per episode (600 seconds/20 send pooling intervals)
+MAX_EPISODES = 1000  # the maximum number of episodes used to train the model (300 second episodes * 1000 episdoes = 300,000 duration / 5 polling periods = 60,000 training steps)
+MAX_EPISODE_STEPS = 14 # the maximum number of steps per episode (600 seconds/20 send polling intervals)
 
 poll = 5 # polling incremnts in seconds
 
@@ -42,36 +42,39 @@ poll = 5 # polling incremnts in seconds
 class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     def __init__(self, *args, **kwargs):
         super(SimpleMonitor13, self).__init__(*args, **kwargs)
-        self.datapaths = {} # list of switches in network
+        self.datapaths = {} # dictionary of switches in network
         self.monitor_thread = hub.spawn(self._monitor)
 
-        self.switches = {}  # a list of switches within the network to keep track of key:flow rule entries, value:packet count pairs
+        self.switches = {}  # a dictionary of switches within the network to keep track of key:flow rule entries, value:packet count pairs
+        self.avg_PI_IAT = 0 # average packet in message inter-arrival time of misses | feature (state)
         self.avg_fd = 0  # average flow duration from flow removed message | feature (state)
         self.curr_count = 0  # current number of flows in flow table from table stats reply
         self.fr_counter = 0  # running total of flows that have been removed from flow table from flow removed
-        self.p_count = 0  # previous packet count from flow stats reply
-        self.total_packets = 0 # holds total packets in switch at time of polling
-        self.total_frpackets = 0 # holds total of packets that has been removed
         self.total_dur = 0  # running total of duration for flows removed from flow removed message
-        self.hit = 0  # percentage of packets matched from table stats reply | outcome (reward)
-        self.use = 0  # percentage of active flows from table stats reply | outcome (reward)
-        self.PIAT = 0  # packet inter-arrival time from flow stats reply | feature (state)
-        self.avg_PI_IAT = 0 # average packet in message inter-arrival time of misses | feature (state)
-        self.avg_PIAT = 0 # average packet inter-arrival time of flows that have timed out | feature (state)
+        self.hit = 0  # percentage of packets matched from table stats reply | outcome (reward) | feature (state)
+        self.use = 0  # percentage of active flows from table stats reply | outcome (reward) | feature (state)
+        self.action = 10  # timeout value | feature (state)
+        self.counter = 0 # total number of packet in request(s)
+        self.cache = TTLCache(maxsize=1000, ttl=20) # cache where each item is accessbile for 10s
+        self.misses = 0 # flow table misses
+        self.difference = 0 # sum of packet in interarrival time diffrence
+        self.total_pi = 0 # total count of packet_in messages
+        self.hitSum = 0 # sum of hits
+        self.useSum = 0 # sum of active
+        self.avg_use = 0 # average use rate
+        self.avg_hit = 0 # average hit rate
+        self.pi_count = 0 # total packet in count for episode
+        self.miss_pi = 0 # sum of missed packet in messages
+        
+        # RL Algorithm initialization specific 
         self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)  # TD3 initialization
+        self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)  # Replay Buffer initialization
         self.prev_state = np.array([None, None, None, None, None])  # placeholder for previous state
         self.state = np.array([None, None, None, None, None])  # placeholder for current state
         self.episode = 0 # episode counter intilization
         self.episode_step = 0  # episode step counter initialization
-        self.action = 10  # timeout value | feature (state)
-        self.counter = 0 # total number of packet in request(s)
-        self.replay_buffer = utils.ReplayBuffer(STATE_DIM, ACTION_DIM)  # Replay Buffer initialization
-        self.cache = TTLCache(maxsize=1000, ttl=20) # cache where each item is accessbile for 20s
-        self.misses = 0 # table misses
-        self.difference = 0 # sum of packet in interarrival time diffrence
-        self.total_pi = 0 # total count of packet_in messages
-        
         self.miniep = 0  # miniepisodes
+        self.decay_step = 0 # decay step
         
         # EXPLORATION HYPERPARAMETERS for epsilon and epsilon greedy strategy
         self.epsilon = 1.0 # exploration probability at start
@@ -101,33 +104,60 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         while True:
             
             while self.episode < MAX_EPISODES:
+                # reset episode variables
                 self.episode_step = 0
+                self.fr_counter = 0
+                self.total_dur = 0
+                self.difference = 0
+                self.miss_pi = 0
                 
                 while self.episode_step < MAX_EPISODE_STEPS:
+                    # reset episode step variables
+                    self.miniep = 0
+                    self.hitSum = 0
+                    self.useSum = 0
+                    
                     if self.episode_step == 0:
                         # initialize state and previous state array
-                        self.state = np.array([None, 10, None, self.action, None], dtype=np.float)
+                        self.state = np.array([0, 10, 0, self.action, 0], dtype=np.float)
                         self.prev_state = np.array([0, 0, 0, self.action, 0])
                     else:
                         # Reset the state each time
-                        self.state = np.array([self.prev_state[0], self.prev_state[1], None, self.action, self.prev_state[4]], dtype=np.float)
+                        self.state = np.array([self.prev_state[0], self.prev_state[1], 0, self.action, self.prev_state[4]], dtype=np.float)
 
-                    # sends stats request to every switch
-                    for datapath in self.datapaths.values():
-                        self._request_stats(datapath)
-                        self.send_barrier_request(datapath)
+                    while self.miniep < 4:
 
-                    # displays current state of network
-                    self.logger.info("Current State:%s ", self.state)
+                        # sends stats request to every switch
+                        for datapath in self.datapaths.values():
+                            self._request_stats(datapath)
+                            self.send_barrier_request(datapath)
+                        
+                        # displays current episode, episode step, and ministep
+                        self.logger.info("Episode: %s Step: %s Mini-Step: %s", self.episode, self.episode_step, self.miniep)
+
+                        # displays current state of network
+                        self.logger.info("Current State:%s ", self.state)
+                        
+                        # displays current timeout value
+                        self.logger.info("timeout value: %s", self.action)
+                        
+                        # increment ministep
+                        self.miniep += 1
                     
-                    # thread sleeps for new duration selected by agent
-                    hub.sleep(poll)
+                        # thread sleeps for new duration selected by agent
+                        hub.sleep(poll)
                     
-                self.model.train(self.replay_buffer)
+                    # increment episode step
+                    self.episode_step += 1
                
+                # increment episode
                 self.episode += 1
 
+            # display saving message(s)
+            self.logger.info("starting save")    
             self.model.save("DDTtrained")
+            self.logger.info("finished save") 
+            break
             # os._exit()
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -230,17 +260,17 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 flow = str(match) # create key
                 
                 if flow not in self.cache: # search for key in cache
-                    self.cache[flow] = time.time() # if the flow isn't in the cache, add it
+                    self.cache[flow] = datetime.now() # if the flow isn't in the cache, add it with time it was added
                 else:
-                    now = time.time()
-                    self.difference += now - self.cache[flow]
-                    self.cache[flow] = now
+                    now = datetime.now() # current time
+                    self.difference += (now - self.cache[flow]).seconds # add difference of times to sum
+                    self.cache[flow] = now # update flow's time
                     self.misses += 1 # if the flow is in the cahce and has to be added again, then the impact is negative
+                    self.miss_pi += 1  # if the flow is in the cahce and has to be added again, then the impact is negative
         
-        if self.misses != 0:
-            self.avg_PI_IAT = (self.difference/self.misses)
-        else:
-            self.avg_PI_IAT = 0
+        # if flows missed, divide the difference in time by misses
+        if self.miss_pi != 0:
+            self.avg_PI_IAT = (self.difference/self.miss_pi)
         
         # Set the first index in the state to Average PacketIn inter-arrival time
         self.state[0] = self.avg_PI_IAT
@@ -281,17 +311,9 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                                           cookie, cookie_mask,
                                           match)
 
-        flows = parser.OFPAggregateStatsRequest(datapath, 0,
-                                                ofproto.OFPTT_ALL,
-                                                ofproto.OFPP_ANY,
-                                                ofproto.OFPG_ANY,
-                                                cookie, cookie_mask,
-                                                match)
-
         # synchronize requests & replies so that thread waits for updates
         ofctl_api.send_msg(self, flow, reply_cls=parser.OFPFlowStatsReply, reply_multi=True)
-        ofctl_api.send_msg(self, flows, reply_cls=parser.OFPAggregateStatsReply, reply_multi=True)
-
+        
         # Once all features are no longer set to None, fit our model on the sample
         self.dynamic_timeout()
 
@@ -301,49 +323,26 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.curr_count = 0
 
         for stat in body:
-            flow = str(stat.match)
+            flow = str(stat.match) # create key
 
+            # if flow not in dict, add flow and packet count and increment active flow count
             if flow not in self.switches[ev.msg.datapath.id]:
                 self.switches[ev.msg.datapath.id][flow] = stat.packet_count
                 self.curr_count += 1
+            # if flow in dict, but packet count changed, update and increment active flow count
             elif self.switches[ev.msg.datapath.id][flow] != stat.packet_count:
                 self.switches[ev.msg.datapath.id][flow] = stat.packet_count
                 self.curr_count += 1
+                
+            # if list of flows not zero 
+            if len(self.switches[ev.msg.datapath.id]) == 0: # prevents zero division error
+                self.use = 0
+            else:
+                self.use = self.curr_count / len(self.switches[ev.msg.datapath.id]) # % of flows actively receiving packets
 
         self.logger.info("FC: %s", self.curr_count)
-        #  self.logger.info(self.switches)
-
-    @set_ev_cls(ofp_event.EventOFPAggregateStatsReply, MAIN_DISPATCHER)
-    def _flow_stats_reply_handler(self, ev):
-        results = ev.msg.body
-
-        self.total_packets = results.packet_count
-        self.logger.info('%s', results)
-
-        if results.packet_count == 0:  # prevents zero division error
-            self.PIAT = 0  # no packets arrived
-        elif self.p_count == 0:  # if initial reply
-            self.PIAT = (results.flow_count * 0.002) / results.packet_count  # packet inter-arrival time = duration / packets
-        else:
-            difference = abs(results.packet_count - self.p_count)  # calculate packet count
-            if difference == 0:  # prevents zero division error
-                self.PIAT = 0  # no packets arrived
-            else:
-                self.PIAT = (results.flow_count * 0.002) / difference
-
-        if results.flow_count == 0:  # prevents zero division error
-            self.use = 0
-        elif self.curr_count > results.flow_count: # if flows timeout between the stats reply
-            self.use = results.flow_count / self.curr_count
-        else:
-            self.use = self.curr_count / results.flow_count  # % of flows actively receiving packets
-
+        self.logger.info("Total: %s", len(self.switches[ev.msg.datapath.id]))
         self.logger.info("Active: %s", self.use)
-        # Set the third index in the state to PIAT
-        self.state[2] = self.PIAT
-
-        self.p_count = results.packet_count  # hold value
-        self.logger.info("Total: %s", results.flow_count)
 
     @set_ev_cls(ofp_event.EventOFPFlowRemoved, MAIN_DISPATCHER)
     def flow_removed_handler(self, ev):
@@ -354,21 +353,12 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             del self.switches[msg.datapath.id][flow]
 
         self.fr_counter += 1  # increment by one every time a flow is removed
-        self.total_frpackets += msg.packet_count # sum of packets transmitted by flows that timeout
 
         self.total_dur += msg.duration_sec  # add the duration of the removed flow to the running total
         self.avg_fd = self.total_dur / self.fr_counter  # duration / flows
-        if self.total_frpackets == 0:
-            self.avg_PIAT = None
-        else:
-            self.avg_PIAT = self.avg_fd / self.total_frpackets #average PIAT of flows that have timed out
 
         # Set the second index in the state to avg_fd
         self.state[1] = self.avg_fd
-        # Set the third index in the state to PIAT
-        self.state[4] = self.avg_PIAT
-        
-        #self.logger.info("Out: %s", self.fr_counter)
 
     def dynamic_timeout(self):
         
@@ -381,51 +371,96 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         self.logger.info("Hit: %s", self.hit)
         
-        reward = ((self.use * 0.50) + (self.hit)) / 1.5
-                
+        # Inverse of active flows
+        self.state[2] = (1 - (self.use)) * 10
+        # Inverse of hit rate
+        if self.total_pi != 0:
+            self.state[4] = (self.misses / self.total_pi) * 10
+        else:
+            self.state[4] = 0
+            
+        # running totals for episode step
+        self.useSum += self.use
+        self.hitSum += self.hit
+        
+        # average of totals
+        self.avg_hit = (self.hitSum / (self.miniep + 1))
+        self.avg_use = (self.useSum / (self.miniep + 1))
+        
+        if self.avg_hit >= 0.80 and self.avg_use >= 0.80:
+            reward = 9
+        elif self.avg_hit <= 0.60 or self.avg_use <= 0.60:
+            reward = -9
+        else:
+            reward = 0
+            
+        self.logger.info("Average Hit: %s Average Use: %s", self.avg_hit, self.avg_use)
+        self.logger.info("Reward: %s", reward)
+        
+        # reset values
         self.misses = 0
         self.total_pi = 0
 
-        self.logger.info("Reward: %s", reward)
-
-        done_bool = 1 if self.episode < MAX_EPISODES else 0
-
-        self.replay_buffer.add(self.prev_state, self.action, self.state, reward, done_bool)
-
-        # self.model.train(self.replay_buffer)
-
-        # self.logger.info("Previous State%s", self.prev_state)
+        done_bool = False if self.episode_step < MAX_EPISODE_STEPS and self.miniep <= 3 else True
+        
+        # set var equal timeout value's corresponding index so that the stored transition has proper information
+        choice = self.action - 1
+        
+        # round values to nearest integer
+        self.state = np.round(self.state)
+        
+        # if any values are larger than 10, set them equal to ten
+        self.state = np.select([self.state >= 10], [10], self.state)
+        
+        # add transition to replay buffer
+        self.replay_buffer.add(self.prev_state, choice, self.state, reward, done_bool)
+        
+        # if replay buffere has enough instances, train model
+        if self.replay_buffer.size >= 256:
+            self.model.train(self.replay_buffer)
 
         # set previous state equal to current state for replay value in next iteration
         self.prev_state = self.state
 
-        if self.miniep < 4:
-            self.logger.info("Episode: %s Step: %s Mini-Step: %s", self.episode, self.episode_step, self.miniep)
-            self.logger.info("timeout value: %s", self.action)
-            self.miniep += 1
-        else:
-            # increase step counter
-            self.episode_step += 1
-            self.miniep = 0
-            self.logger.info("Episode: %s Step: %s Mini-Step: %s", self.episode, self.episode_step, self.miniep)
+        if self.miniep >= 3 :
 
             # Randomly select a new action
-            explore_probability = self.epsilon_min + (self.epsilon - self.epsilon_min) * np.exp(-self.epsilon_decay * self.episode_step)
+            explore_probability = self.epsilon_min + (self.epsilon - self.epsilon_min) * np.exp(-self.epsilon_decay * self.decay_step)
+            
+            self.logger.info("Probability: %s", explore_probability)
 
-            if explore_probability > np.random.rand():
+            if self.episode_step < 10 and explore_probability > np.random.rand():
+                # increment decay step
+                self.decay_step += 1
+                # displays Q values for choices
+                self.logger.info(self.model.select_action(self.state))
+                # 
+                choices = (np.flatnonzero(self.model.select_action(self.state) == np.max(self.model.select_action(self.state))))
+                self.logger.info(choices)
                 # Make a random action (exploration)
-                new_action = (random.randrange(ACTION_DIM)+1) 
+                # if hit rate is below 80%, a larger value will increase the hit rate
+                if self.avg_hit < 0.80:
+                    new_action = (random.randint(5, 9)+1)
+                # if use rate is below 80%, a smaller value will increase the use rate
+                elif self.avg_use < 0.80:
+                    new_action = (random.randint(0, 4)+1)
+                # model chooses highest Q values to maintain stability
+                else:
+                    new_action = (random.choice(choices)+1)  
             else:
                 # Get action from Q-network (exploitation)
                 # Estimate the Qs values state
                 # Take the biggest Q value (= the best action)
-                new_action = (np.argmax(self.model.select_action(self.state)) + 1)
+                self.logger.info("not random")
+                self.logger.info(self.model.select_action(self.state))
+                choices = (np.flatnonzero(self.model.select_action(self.state) == np.max(self.model.select_action(self.state))))
+                self.logger.info(choices)
+                if len(choices) == 0:
+                    new_action = 6
+                else:
+                    new_action =round(np.median(choices)+1)
 
             self.action = new_action
-            
-            # increment mini-ep
-            self.miniep += 1
-
-            self.logger.info("timeout value: %s", self.action)
 
         self.barrier_reply_handler
+   
