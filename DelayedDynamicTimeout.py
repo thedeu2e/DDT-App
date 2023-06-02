@@ -25,6 +25,7 @@ from ryu.lib.packet import udp
 import numpy as np
 import os
 import random
+import re
 from datetime import datetime
 
 from cachetools import cached, TTLCache
@@ -65,6 +66,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.avg_hit = 0 # average hit rate
         self.pi_count = 0 # total packet in count for episode
         self.miss_pi = 0 # sum of missed packet in messages
+        self.holder1 = 0
+        self.holder2 = 0
         
         # RL Algorithm initialization specific 
         self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)  # TD3 initialization
@@ -79,7 +82,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         # EXPLORATION HYPERPARAMETERS for epsilon and epsilon greedy strategy
         self.epsilon = 1.0 # exploration probability at start
         self.epsilon_min = 0.01 # minimum exploration probability
-        self.epsilon_decay = 0.0005 # exponential decay rate for exploration prob
+        self.epsilon_decay = 0.0001 # exponential decay rate for exploration prob
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -116,6 +119,8 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                     self.miniep = 0
                     self.hitSum = 0
                     self.useSum = 0
+                    self.holder1 = 0
+                    self.holder2 = 0
                     
                     if self.episode_step == 0:
                         # initialize state and previous state array
@@ -126,17 +131,14 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                         self.state = np.array([self.prev_state[0], self.prev_state[1], 0, self.action, self.prev_state[4]], dtype=np.float)
 
                     while self.miniep < 4:
+                        
+                        # displays current episode, episode step, and ministep
+                        self.logger.info("Episode: %s Step: %s Mini-Step: %s", self.episode, self.episode_step, self.miniep)
 
                         # sends stats request to every switch
                         for datapath in self.datapaths.values():
                             self._request_stats(datapath)
                             self.send_barrier_request(datapath)
-                        
-                        # displays current episode, episode step, and ministep
-                        self.logger.info("Episode: %s Step: %s Mini-Step: %s", self.episode, self.episode_step, self.miniep)
-
-                        # displays current state of network
-                        self.logger.info("Current State:%s ", self.state)
                         
                         # displays current timeout value
                         self.logger.info("timeout value: %s", self.action)
@@ -146,6 +148,9 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                     
                         # thread sleeps for new duration selected by agent
                         hub.sleep(poll)
+                        
+                    # displays current state of network
+                    self.logger.info("Current State:%s ", self.state)
                     
                     # increment episode step
                     self.episode_step += 1
@@ -155,7 +160,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
             # display saving message(s)
             self.logger.info("starting save")    
-            self.model.save("DDTtrained")
+            self.model.save("DDTtrained2")
             self.logger.info("finished save") 
             break
             # os._exit()
@@ -372,64 +377,91 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.logger.info("Hit: %s", self.hit)
         
         # Inverse of active flows
-        self.state[2] = (1 - (self.use)) * 10
+        self.holder1 += (1 - (self.use)) * 10
         # Inverse of hit rate
         if self.total_pi != 0:
-            self.state[4] = (self.misses / self.total_pi) * 10
+            self.holder2 += (self.misses / self.total_pi) * 10
         else:
-            self.state[4] = 0
+            self.holder2 += 0
+            
+        done_bool = False
             
         # running totals for episode step
         self.useSum += self.use
         self.hitSum += self.hit
         
+        # running totals
+        self.state[2] = (self.holder1 / (self.miniep + 1))
+        self.state[4] = (self.holder2 / (self.miniep + 1))
+        
         # average of totals
         self.avg_hit = (self.hitSum / (self.miniep + 1))
         self.avg_use = (self.useSum / (self.miniep + 1))
         
-        if self.avg_hit >= 0.80 and self.avg_use >= 0.80:
+        if self.avg_hit >= 0.90 and self.avg_use >= 0.90:
             reward = 9
-        elif self.avg_hit <= 0.60 or self.avg_use <= 0.60:
+            done_bool = True
+        elif self.avg_hit < 0.75 or self.avg_use < 0.75: 
             reward = -9
         else:
-            reward = 0
+            reward = - (abs(2-(self.avg_hit + self.avg_use))) * 10
             
         self.logger.info("Average Hit: %s Average Use: %s", self.avg_hit, self.avg_use)
-        self.logger.info("Reward: %s", reward)
         
         # reset values
         self.misses = 0
         self.total_pi = 0
 
-        done_bool = False if self.episode_step < MAX_EPISODE_STEPS and self.miniep <= 3 else True
+        if self.miniep >= 3:
+            
+            self.logger.info("Reward: %s", reward)
+            
+            # round values to nearest integer
+            self.state = np.round(self.state, 1)
         
-        # set var equal timeout value's corresponding index so that the stored transition has proper information
-        choice = self.action - 1
+            # if any values are larger than 10, set them equal to ten
+            self.state = np.select([self.state >= 10], [10], self.state)
+            
+            # It computes the start index by rounding the first element of self.state, subtracting 1, and taking the maximum of the result and 0. This ensures that the start index is at least 0
+            startindex = max(round(self.state[0]) - 1, 0)
+            # computes the end index by rounding the second element of self.state, subtracting 1, and taking the minimum of the result and 9. This ensures that the end index is at most 9
+            endindex = min(round(self.state[1]) - 1, 9)
         
-        # round values to nearest integer
-        self.state = np.round(self.state)
+            # set var equal timeout value's corresponding index so that the stored transition has proper information
+            choice = self.action - 1
         
-        # if any values are larger than 10, set them equal to ten
-        self.state = np.select([self.state >= 10], [10], self.state)
+            self.replay_buffer.add(self.prev_state, choice, self.state, reward, done_bool)
         
-        # add transition to replay buffer
-        self.replay_buffer.add(self.prev_state, choice, self.state, reward, done_bool)
+            # set previous state equal to current state for replay value in next iteration
+            self.prev_state = self.state
         
-        # if replay buffere has enough instances, train model
-        if self.replay_buffer.size >= 256:
-            self.model.train(self.replay_buffer)
-
-        # set previous state equal to current state for replay value in next iteration
-        self.prev_state = self.state
-
-        if self.miniep >= 3 :
+            # if replay buffere has enough instances, train model
+            if self.replay_buffer.size >= 1500:
+                self.model.train(self.replay_buffer)
 
             # Randomly select a new action
             explore_probability = self.epsilon_min + (self.epsilon - self.epsilon_min) * np.exp(-self.epsilon_decay * self.decay_step)
             
             self.logger.info("Probability: %s", explore_probability)
-
-            if self.episode_step < 10 and explore_probability > np.random.rand():
+            
+            if self.replay_buffer.size <= 3000:
+                self.decay_step += 1
+                # if hit rate is below 80%, a larger value will increase the hit rate
+                if self.avg_hit < 0.90:
+                    if self.action !=10:
+                        new_action = (random.randint((self.action + 1), 10))
+                    else:
+                        new_action = 10
+                # if use rate is below 80%, a smaller value will increase the use rate
+                elif self.avg_use < 0.90:
+                    if self.action !=1:
+                        new_action = (random.randint(1, (self.action - 1)))
+                    else:
+                        new_action = 1
+                # model chooses highest Q values to maintain stability
+                else:
+                    new_action = self.action        
+            elif self.episode_step < 10 and explore_probability > np.random.rand():
                 # increment decay step
                 self.decay_step += 1
                 # displays Q values for choices
@@ -437,30 +469,50 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 # 
                 choices = (np.flatnonzero(self.model.select_action(self.state) == np.max(self.model.select_action(self.state))))
                 self.logger.info(choices)
+                # if hit rate is below 80%, a larger value will increase the hit rate
+                if self.avg_hit < 0.90:
+                    if self.action < 8:               
+                        new_action = (random.randint((self.action + 1), (self.action + 3)))
+                    else:
+                        new_action = (random.randint(self.action, 10))
                 # Make a random action (exploration)
                 # if hit rate is below 80%, a larger value will increase the hit rate
-                if self.avg_hit < 0.80:
-                    new_action = (random.randint(5, 9)+1)
                 # if use rate is below 80%, a smaller value will increase the use rate
-                elif self.avg_use < 0.80:
-                    new_action = (random.randint(0, 4)+1)
+                elif self.avg_use < 0.90:
+                    if self.action > 4:
+                        new_action = (random.randint((self.action - 3), (self.action - 1)))
+                    else:
+                        new_action = (random.randint(1, self.action))
                 # model chooses highest Q values to maintain stability
                 else:
-                    new_action = (random.choice(choices)+1)  
+                    new_action = self.action 
             else:
                 # Get action from Q-network (exploitation)
                 # Estimate the Qs values state
                 # Take the biggest Q value (= the best action)
                 self.logger.info("not random")
                 self.logger.info(self.model.select_action(self.state))
-                choices = (np.flatnonzero(self.model.select_action(self.state) == np.max(self.model.select_action(self.state))))
-                self.logger.info(choices)
-                if len(choices) == 0:
-                    new_action = 6
+                # creates a copy of the array returned by self.model.select_action(self.state) and assigns it to the variable arr
+                arr = np.copy(self.model.select_action(self.state))
+                # check if start index is less than or equal to end index
+                if startindex <= endindex:
+                    # creates a copy of a portion of the arr array, ranging from the startindex to endindex + 1, and assigns it to the variable sub_arr
+                    sub_arr = np.copy(arr[startindex:endindex+1])
+                    # check if the array is empty before performing the maximum operation
+                    if sub_arr.size > 0:
+                        # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
+                        max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0] + startindex
+                        # converts the max_indices_shifted array to a Python list and assigns it to the variable choices
+                        choices = list(max_indices_shifted)
+                        self.logger.info(choices)
+                        new_action = round(np.median(choices)+1)
+                    else:
+                        # choose an action, at random, between the start index and end index
+                        new_action = (random.randint(startindex, endindex) +1)
                 else:
-                    new_action =round(np.median(choices)+1)
+                    new_action = self.action
 
             self.action = new_action
 
         self.barrier_reply_handler
-   
+        
