@@ -35,7 +35,7 @@ STATE_DIM = 5  # 4-Dimensional State Space: [avg_PI_IAT, avg_fd, Inactive, actio
 ACTION_DIM = 10  # 10-Dimensional Action Space: 1-10
 MAX_ACTION = 9  # 10 is the choice with the highest value available to the agent
 MAX_EPISODES = 1000  # the maximum number of episodes used to train the model (300 second episodes * 1000 episdoes = 300,000 duration / 5 polling periods = 60,000 training steps)
-MAX_EPISODE_STEPS = 14 # the maximum number of steps per episode (600 seconds/20 send polling intervals)
+MAX_EPISODE_STEPS = 3 # the maximum number of steps per episode (60 seconds/20 second increments send polling intervals)
 
 poll = 5 # polling incremnts in seconds
 
@@ -54,7 +54,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.total_dur = 0  # running total of duration for flows removed from flow removed message
         self.hit = 0  # percentage of packets matched from table stats reply | outcome (reward) | feature (state)
         self.use = 0  # percentage of active flows from table stats reply | outcome (reward) | feature (state)
-        self.action = 10  # timeout value | feature (state)
+        self.action = 6  # timeout value | feature (state)
         self.counter = 0 # total number of packet in request(s)
         self.cache = TTLCache(maxsize=1000, ttl=20) # cache where each item is accessbile for 10s
         self.misses = 0 # flow table misses
@@ -83,6 +83,14 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.epsilon = 1.0 # exploration probability at start
         self.epsilon_min = 0.01 # minimum exploration probability
         self.epsilon_decay = 0.0001 # exponential decay rate for exploration prob
+        
+        # Evaluation
+        self.tp = 0 # total count of packet_in messages
+        self.avg_active = 0 # total avg of active flows
+        self.avg_rate = 0 # total avg of table hits
+        self.iterations = 0 # total times ran
+        self.holder3 = 0
+        self.holder4 = 0
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -103,10 +111,12 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
     def _monitor(self):
         self.logger.info("starting flow monitoring thread")
+        
+        self.model.load("DDTtrained2")
 
         while True:
             
-            while self.episode < MAX_EPISODES:
+             while self.episode < MAX_EPISODES:
                 # reset episode variables
                 self.episode_step = 0
                 self.fr_counter = 0
@@ -122,16 +132,10 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                     self.holder1 = 0
                     self.holder2 = 0
                     
-                    if self.episode_step == 0:
-                        # initialize state and previous state array
-                        self.state = np.array([0, 10, 0, self.action, 0], dtype=np.float)
-                        self.prev_state = np.array([0, 0, 0, self.action, 0])
-                    else:
-                        # Reset the state each time
-                        self.state = np.array([self.prev_state[0], self.prev_state[1], 0, self.action, self.prev_state[4]], dtype=np.float)
+                    self.state = np.array([0, 6, 0, self.action, 0], dtype=np.float)
 
                     while self.miniep < 4:
-                        
+
                         # displays current episode, episode step, and ministep
                         self.logger.info("Episode: %s Step: %s Mini-Step: %s", self.episode, self.episode_step, self.miniep)
 
@@ -154,17 +158,12 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                     
                     # increment episode step
                     self.episode_step += 1
-               
+                
                 # increment episode
                 self.episode += 1
-
-            # display saving message(s)
-            self.logger.info("starting save")    
-            self.model.save("DDTtrained2")
-            self.logger.info("finished save") 
-            break
-            # os._exit()
-
+                
+            #break
+            
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
@@ -194,6 +193,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 MAIN_DISPATCHER)  # Using 'MAIN_DISPATCHER' as the second argument means this function is called only after the negotiation completes
     def _packet_in_handler(self, ev):
         self.total_pi += 1 # sum of packet_in messages during polling period
+        self.tp += 1 # sum of packet_in messages during testing
         
         msg = ev.msg  # object that represents a packet_in data structure
         datapath = msg.datapath  # an object that represents a datapath (switch)
@@ -398,24 +398,31 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.avg_hit = (self.hitSum / (self.miniep + 1))
         self.avg_use = (self.useSum / (self.miniep + 1))
         
-        if self.avg_hit >= 0.90 and self.avg_use >= 0.90:
-            reward = 9
-            done_bool = True
-        elif self.avg_hit < 0.75 or self.avg_use < 0.75: 
-            reward = -9
-        else:
-            reward = - (abs(2-(self.avg_hit + self.avg_use))) * 10
-            
         self.logger.info("Average Hit: %s Average Use: %s", self.avg_hit, self.avg_use)
+        self.logger.info("Packet In Messages: %s", self.total_pi)
         
         # reset values
         self.misses = 0
         self.total_pi = 0
 
+
+        self.logger.info("Average Active Rate: %s", self.avg_active)
+        self.logger.info("Average Hit Rate: %s", self.avg_rate)
+        self.logger.info("Total Packet_In: %s", self.tp)
+
         if self.miniep >= 3:
             
-            self.logger.info("Reward: %s", reward)
+            # increment iterations
+            self.iterations += 1
             
+            # update sums
+            self.holder3 += self.avg_hit
+            self.holder4 += self.avg_use
+            
+            # take average
+            self.avg_active = (self.holder4 / self.iterations)
+            self.avg_rate = (self.holder3 / self.iterations) 
+        
             # round values to nearest integer
             self.state = np.round(self.state, 1)
         
@@ -426,93 +433,31 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             startindex = max(round(self.state[0]) - 1, 0)
             # computes the end index by rounding the second element of self.state, subtracting 1, and taking the minimum of the result and 9. This ensures that the end index is at most 9
             endindex = min(round(self.state[1]) - 1, 9)
-        
-            # set var equal timeout value's corresponding index so that the stored transition has proper information
-            choice = self.action - 1
-        
-            self.replay_buffer.add(self.prev_state, choice, self.state, reward, done_bool)
-        
-            # set previous state equal to current state for replay value in next iteration
-            self.prev_state = self.state
-        
-            # if replay buffere has enough instances, train model
-            if self.replay_buffer.size >= 1500:
-                self.model.train(self.replay_buffer)
-
-            # Randomly select a new action
-            explore_probability = self.epsilon_min + (self.epsilon - self.epsilon_min) * np.exp(-self.epsilon_decay * self.decay_step)
             
-            self.logger.info("Probability: %s", explore_probability)
-            
-            if self.replay_buffer.size <= 3000:
-                self.decay_step += 1
-                # if hit rate is below 80%, a larger value will increase the hit rate
-                if self.avg_hit < 0.90:
-                    if self.action !=10:
-                        new_action = (random.randint((self.action + 1), 10))
-                    else:
-                        new_action = 10
-                # if use rate is below 80%, a smaller value will increase the use rate
-                elif self.avg_use < 0.90:
-                    if self.action !=1:
-                        new_action = (random.randint(1, (self.action - 1)))
-                    else:
-                        new_action = 1
-                # model chooses highest Q values to maintain stability
+            # Get action from Q-network (exploitation)
+            # Estimate the Qs values state
+            # Take the biggest Q value (= the best action)
+            self.logger.info(self.model.select_action(self.state))
+            # creates a copy of the array returned by self.model.select_action(self.state) and assigns it to the variable arr
+            arr = np.copy(self.model.select_action(self.state))
+            # check if start index is less than or equal to end index
+            if startindex <= endindex:
+                # creates a copy of a portion of the arr array, ranging from the startindex to endindex + 1, and assigns it to the variable sub_arr
+                sub_arr = np.copy(arr[startindex:endindex+1])
+                # check if the array is empty before performing the maximum operation
+                if sub_arr.size > 0:
+                    # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
+                    max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0] + startindex
+                    # converts the max_indices_shifted array to a Python list and assigns it to the variable choices
+                    choices = list(max_indices_shifted)
+                    self.logger.info(choices)
+                    new_action = round(np.median(choices)+1)
                 else:
-                    new_action = self.action        
-            elif self.episode_step < 10 and explore_probability > np.random.rand():
-                # increment decay step
-                self.decay_step += 1
-                # displays Q values for choices
-                self.logger.info(self.model.select_action(self.state))
-                # 
-                choices = (np.flatnonzero(self.model.select_action(self.state) == np.max(self.model.select_action(self.state))))
-                self.logger.info(choices)
-                # if hit rate is below 80%, a larger value will increase the hit rate
-                if self.avg_hit < 0.90:
-                    if self.action < 8:               
-                        new_action = (random.randint((self.action + 1), (self.action + 3)))
-                    else:
-                        new_action = (random.randint(self.action, 10))
-                # Make a random action (exploration)
-                # if hit rate is below 80%, a larger value will increase the hit rate
-                # if use rate is below 80%, a smaller value will increase the use rate
-                elif self.avg_use < 0.90:
-                    if self.action > 4:
-                        new_action = (random.randint((self.action - 3), (self.action - 1)))
-                    else:
-                        new_action = (random.randint(1, self.action))
-                # model chooses highest Q values to maintain stability
-                else:
-                    new_action = self.action 
+                    # choose an action, at random, between the start index and end index
+                    new_action = (random.randint(startindex, endindex) +1)
             else:
-                # Get action from Q-network (exploitation)
-                # Estimate the Qs values state
-                # Take the biggest Q value (= the best action)
-                self.logger.info("not random")
-                self.logger.info(self.model.select_action(self.state))
-                # creates a copy of the array returned by self.model.select_action(self.state) and assigns it to the variable arr
-                arr = np.copy(self.model.select_action(self.state))
-                # check if start index is less than or equal to end index
-                if startindex <= endindex:
-                    # creates a copy of a portion of the arr array, ranging from the startindex to endindex + 1, and assigns it to the variable sub_arr
-                    sub_arr = np.copy(arr[startindex:endindex+1])
-                    # check if the array is empty before performing the maximum operation
-                    if sub_arr.size > 0:
-                        # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
-                        max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0] + startindex
-                        # converts the max_indices_shifted array to a Python list and assigns it to the variable choices
-                        choices = list(max_indices_shifted)
-                        self.logger.info(choices)
-                        new_action = round(np.median(choices)+1)
-                    else:
-                        # choose an action, at random, between the start index and end index
-                        new_action = (random.randint(startindex, endindex) +1)
-                else:
-                    new_action = self.action
+                new_action = self.action
 
             self.action = new_action
 
         self.barrier_reply_handler
-        
