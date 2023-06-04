@@ -69,8 +69,13 @@ def generate_elephant_flows(id, net):
     protocol = random.choice(protocol_list)
     port_argument = str(random.randint(port_min, port_max))
     bandwidth_argument = random.choice(elephant_bandwidth_list)
-    i = str(random.choice(intervals))
-    n = str(random.choice(number))
+    x = random.randint(1,10)
+    if x == 1:
+        y = 10
+    else:
+        y = (random.randint(round((10/x)+1), 10))
+    i = str(round((1/x), 2))
+    n = str(y)
     
     # create cmd
     client_cmd = "mgen event \"ON "
@@ -109,8 +114,10 @@ def generate_mice_flows(id, net):
     protocol = random.choice(protocol_list)
     port_argument = str(random.randint(port_min, port_max))
     bandwidth_argument = random.choice(mice_bandwidth_list)
-    i = str(1)
-    n = str(1)
+    x = random.randint(1,10)
+    y= (random.randint(1, round(10/x)))
+    i = str(round((1/x), 2))
+    n = str(y)
     
     # create cmd
     client_cmd = "mgen event \"ON "
@@ -326,5 +333,9 @@ if __name__ == "__main__":
 
 '''
 Area for scratch pad
+
+600,500 duration
+60,000 elephant flows
+540,000 mice flows
 
 '''
