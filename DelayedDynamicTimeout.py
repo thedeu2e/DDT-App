@@ -404,7 +404,19 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         elif self.avg_hit < 0.75 or self.avg_use < 0.75: 
             reward = -9
         else:
-            reward = - (abs(2-(self.avg_hit + self.avg_use))) * 10
+            if self.avg_hit >= 0.90:
+                holder1 = 0.9
+            else:
+                holder1 = self.avg_hit
+                
+            if self.avg_use >= 0.90:
+                holder2 = 0.9
+            else:
+                holder2 = self.avg_use
+                
+            # Calculate the harmonic mean
+            harmonic_mean = 2 / ((1 / (holder1 / 0.9)) + (1 / (holder2 / 0.9)))
+            reward = -abs(1 - (1.6 - harmonic_mean)) * 10
             
         self.logger.info("Average Hit: %s Average Use: %s", self.avg_hit, self.avg_use)
         
