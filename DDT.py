@@ -444,20 +444,42 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             if startindex <= endindex:
                 # creates a copy of a portion of the arr array, ranging from the startindex to endindex + 1, and assigns it to the variable sub_arr
                 sub_arr = np.copy(arr[startindex:endindex+1])
+                 
+                # checks if the size of sub_arr is not empty.
+                if sub_arr.size > 0:
+                    # checks if the size of sub_arr is greater than 1, which determines whether sub_arr2 is created based on parity.
+                    if sub_arr.size > 1:
+                        # Check the parity of endindex and select even or odd indices accordingly
+                        sub_arr2 = sub_arr[sub_arr % 2 != (endindex % 2)]
+                        # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
+                        max_indices_shifted = np.where(sub_arr2 == np.max(sub_arr2))[0] + startindex
+                        
+                    else:
+                        # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
+                        max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0] + startindex
+                        
+                    # converts the max_indices_shifted array to a Python list and assigns it to the variable choices
+                    choices = list(max_indices_shifted)
+                    self.logger.info(choices)
+                    new_action = round(np.median(choices)+1)
+                
+            else:
+                # creates a copy of a portion of the arr array, ranging from the start to endindex + 1, and assigns it to the variable sub_arr
+                sub_arr = np.copy(arr[:endindex+1])
+                    
                 # check if the array is empty before performing the maximum operation
                 if sub_arr.size > 0:
                     # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
                     max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0] + startindex
                     # converts the max_indices_shifted array to a Python list and assigns it to the variable choices
+                    
                     choices = list(max_indices_shifted)
                     self.logger.info(choices)
                     new_action = round(np.median(choices)+1)
+                    
                 else:
-                    # choose an action, at random, between the start index and end index
-                    new_action = (random.randint(startindex, endindex) +1)
-            else:
-                new_action = self.action
+                    new_action = self.action
 
-            self.action = new_action
+        self.action = new_action
 
         self.barrier_reply_handler
