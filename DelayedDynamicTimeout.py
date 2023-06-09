@@ -398,25 +398,25 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.avg_hit = (self.hitSum / (self.miniep + 1))
         self.avg_use = (self.useSum / (self.miniep + 1))
         
-        if self.avg_hit >= 0.90 and self.avg_use >= 0.90:
+        if self.avg_hit >= 0.95 and self.avg_use >= 0.95:
             reward = 9
             done_bool = True
         elif self.avg_hit < 0.75 or self.avg_use < 0.75: 
             reward = -9
         else:
-            if self.avg_hit >= 0.90:
-                holder1 = 0.9
+            if self.avg_hit >= 0.95:
+                holder1 = 0.95
             else:
                 holder1 = self.avg_hit
                 
-            if self.avg_use >= 0.90:
-                holder2 = 0.9
+            if self.avg_use >= 0.95:
+                holder2 = 0.95
             else:
                 holder2 = self.avg_use
                 
             # Calculate the harmonic mean
-            harmonic_mean = 2 / ((1 / (holder1 / 0.9)) + (1 / (holder2 / 0.9)))
-            reward = -abs(1 - (1.6 - harmonic_mean)) * 10
+            harmonic_mean = 2 / ((1 / (holder1 / 0.95)) + (1 / (holder2 / 0.95)))
+            reward = -abs(1 - (1.7 - harmonic_mean)) * 10
             
         self.logger.info("Average Hit: %s Average Use: %s", self.avg_hit, self.avg_use)
         
@@ -460,19 +460,21 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 self.decay_step += 1
                 # if hit rate is below 80%, a larger value will increase the hit rate
                 if self.avg_hit < 0.90:
-                    if self.action !=10:
-                        new_action = (random.randint((self.action + 1), 10))
+                    if self.action < 9:               
+                        new_action = (random.randint((self.action + 1), (self.action + 2)))
                     else:
-                        new_action = 10
+                        new_action = (random.randint(self.action, 10))
+                # Make a random action (exploration)
+                # if hit rate is below 80%, a larger value will increase the hit rate
                 # if use rate is below 80%, a smaller value will increase the use rate
                 elif self.avg_use < 0.90:
-                    if self.action !=1:
-                        new_action = (random.randint(1, (self.action - 1)))
+                    if self.action > 3:
+                        new_action = (random.randint((self.action - 2), (self.action - 1)))
                     else:
-                        new_action = 1
+                        new_action = (random.randint(1, self.action))
                 # model chooses highest Q values to maintain stability
                 else:
-                    new_action = self.action        
+                    new_action = (random.randint(1, 10))    
             elif self.episode_step < 10 and explore_probability > np.random.rand():
                 # increment decay step
                 self.decay_step += 1
@@ -510,7 +512,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 if startindex <= endindex:
                     # creates a copy of a portion of the arr array, ranging from the startindex to endindex + 1, and assigns it to the variable sub_arr
                     sub_arr = np.copy(arr[startindex:endindex+1])
-
+                 
                     # checks if the size of sub_arr is not empty.
                     if sub_arr.size > 0:
                         # checks if the size of sub_arr is greater than 1, which determines whether sub_arr2 is created based on parity.
@@ -519,33 +521,33 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                             sub_arr2 = sub_arr[sub_arr % 2 != (endindex % 2)]
                             # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
                             max_indices_shifted = np.where(sub_arr2 == np.max(sub_arr2))[0] + startindex
-
+                        
                         else:
                             # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
                             max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0] + startindex
-
+                        
                         # converts the max_indices_shifted array to a Python list and assigns it to the variable choices
                         choices = list(max_indices_shifted)
                         self.logger.info(choices)
                         new_action = round(np.median(choices)+1)
-
-                else:
-                    # creates a copy of a portion of the arr array, ranging from the start to endindex + 1, and assigns it to the variable sub_arr
-                    sub_arr = np.copy(arr[:endindex+1])
-
-                    # check if the array is empty before performing the maximum operation
-                    if sub_arr.size > 0:
-                        # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
-                        max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0] + startindex
-                        # converts the max_indices_shifted array to a Python list and assigns it to the variable choices
-
-                        choices = list(max_indices_shifted)
-                        self.logger.info(choices)
-                        new_action = round(np.median(choices)+1)
-
+                
                     else:
-                        new_action = self.action
+                        # creates a copy of a portion of the arr array, ranging from the start to endindex + 1, and assigns it to the variable sub_arr
+                        endindex = min((np.ceil(self.state[0]).astype(int)) - 1, 9)
+                        sub_arr = np.copy(arr[:endindex+1])
 
-            self.action = new_action
+                        # check if the array is empty before performing the maximum operation
+                        if sub_arr.size > 0:
+                            # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
+                            max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0]
+                            # converts the max_indices_shifted array to a Python list and assigns it to the variable choices
 
-            self.barrier_reply_handler
+                            choices = list(max_indices_shifted)
+                            self.logger.info(choices)
+                            new_action = round(np.median(choices)+1)
+                    
+        else:
+            new_action = self.action
+
+        self.action = new_action
+        self.barrier_reply_handler
