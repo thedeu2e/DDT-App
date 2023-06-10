@@ -359,7 +359,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         self.fr_counter += 1  # increment by one every time a flow is removed
 
-        self.total_dur += msg.duration_sec  # add the duration of the removed flow to the running total
+        self.total_dur += msg.duration_sec + (msg.duration_nsec/100000000) # add the duration of the removed flow to the running total
         self.avg_fd = self.total_dur / self.fr_counter  # duration / flows
 
         # Set the second index in the state to avg_fd
