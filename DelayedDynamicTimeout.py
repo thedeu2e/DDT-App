@@ -34,8 +34,8 @@ from cachetools import cached, TTLCache
 STATE_DIM = 5  # 4-Dimensional State Space: [avg_PI_IAT, avg_fd, Inactive, action, misses]
 ACTION_DIM = 10  # 10-Dimensional Action Space: 1-10
 MAX_ACTION = 9  # 10 is the choice with the highest value available to the agent
-MAX_EPISODES = 1000  # the maximum number of episodes used to train the model (300 second episodes * 1000 episdoes = 300,000 duration / 5 polling periods = 60,000 training steps)
-MAX_EPISODE_STEPS = 14 # the maximum number of steps per episode (600 seconds/20 send polling intervals)
+MAX_EPISODES = 2500  # the maximum number of episodes used to train the model (300 second episodes * 1000 episdoes = 300,000 duration / 5 polling periods = 60,000 training steps)
+MAX_EPISODE_STEPS = 15 # the maximum number of steps per episode (600 seconds/20 send polling intervals)
 
 poll = 5 # polling incremnts in seconds
 
@@ -68,6 +68,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.miss_pi = 0 # sum of missed packet in messages
         self.holder1 = 0
         self.holder2 = 0
+        self.new = 0
         
         # RL Algorithm initialization specific 
         self.model = TD3.TD3(STATE_DIM, ACTION_DIM, MAX_ACTION)  # TD3 initialization
@@ -160,7 +161,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
             # display saving message(s)
             self.logger.info("starting save")    
-            self.model.save("DDTtrained2")
+            self.model.save("DDTtrained1")
             self.logger.info("finished save") 
             break
             # os._exit()
@@ -340,7 +341,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 self.curr_count += 1
                 
             # if list of flows not zero 
-            if len(self.switches[ev.msg.datapath.id]) == 0: # prevents zero division error
+            if (len(self.switches[ev.msg.datapath.id]))== 0: # prevents zero division error
                 self.use = 0
             else:
                 self.use = self.curr_count / len(self.switches[ev.msg.datapath.id]) # % of flows actively receiving packets
@@ -359,7 +360,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
 
         self.fr_counter += 1  # increment by one every time a flow is removed
 
-        self.total_dur += msg.duration_sec + (msg.duration_nsec/100000000) # add the duration of the removed flow to the running total
+        self.total_dur += (msg.duration_sec + (msg.duration_nsec/1000000000)) # add the duration of the removed flow to the running total
         self.avg_fd = self.total_dur / self.fr_counter  # duration / flows
 
         # Set the second index in the state to avg_fd
@@ -383,8 +384,11 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             self.holder2 += (self.misses / self.total_pi) * 10
         else:
             self.holder2 += 0
-            
-        done_bool = False
+        
+        if self.episode_step == 14:
+            done_bool = True
+        else:
+            done_bool = False
             
         # running totals for episode step
         self.useSum += self.use
@@ -398,25 +402,25 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.avg_hit = (self.hitSum / (self.miniep + 1))
         self.avg_use = (self.useSum / (self.miniep + 1))
         
-        if self.avg_hit >= 0.95 and self.avg_use >= 0.95:
+        if self.avg_hit >= 0.90 and self.avg_use >= 0.90:
             reward = 9
-            done_bool = True
         elif self.avg_hit < 0.75 or self.avg_use < 0.75: 
             reward = -9
         else:
-            if self.avg_hit >= 0.95:
-                holder1 = 0.95
+            if self.avg_hit >= 0.90:
+                holder1 = 0.90
             else:
                 holder1 = self.avg_hit
                 
-            if self.avg_use >= 0.95:
-                holder2 = 0.95
+            if self.avg_use >= 0.90:
+                holder2 = 0.90
             else:
                 holder2 = self.avg_use
                 
             # Calculate the harmonic mean
-            harmonic_mean = 2 / ((1 / (holder1 / 0.95)) + (1 / (holder2 / 0.95)))
-            reward = -abs(1 - (1.7 - harmonic_mean)) * 10
+            harmonic_mean = 2 / ((1 / (holder1) + (1 / (holder2))))
+            reward = -abs((1 - harmonic_mean)) * 10
+
             
         self.logger.info("Average Hit: %s Average Use: %s", self.avg_hit, self.avg_use)
         
@@ -434,7 +438,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             # if any values are larger than 10, set them equal to ten
             self.state = np.select([self.state >= 10], [10], self.state)
             
-            # It computes the start index by rounding the first element of self.state, subtracting 1, and taking the maximum of the result and 0. This ensures that the start index is at least 0
+            # It computes the start index by rounding the first element of self.state, and taking the maximum of the result and 0. This ensures that the start index is at least 0
             startindex = max(round(self.state[0]) - 1, 0)
             # computes the end index by rounding the second element of self.state, subtracting 1, and taking the minimum of the result and 9. This ensures that the end index is at most 9
             endindex = min(round(self.state[1]) - 1, 9)
@@ -460,21 +464,19 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 self.decay_step += 1
                 # if hit rate is below 80%, a larger value will increase the hit rate
                 if self.avg_hit < 0.90:
-                    if self.action < 9:               
-                        new_action = (random.randint((self.action + 1), (self.action + 2)))
+                    if self.action !=10:
+                        new_action = (random.randint((self.action + 1), 10))
                     else:
-                        new_action = (random.randint(self.action, 10))
-                # Make a random action (exploration)
-                # if hit rate is below 80%, a larger value will increase the hit rate
+                        new_action = 10
                 # if use rate is below 80%, a smaller value will increase the use rate
                 elif self.avg_use < 0.90:
-                    if self.action > 3:
-                        new_action = (random.randint((self.action - 2), (self.action - 1)))
+                    if self.action !=1:
+                        new_action = (random.randint(1, (self.action - 1)))
                     else:
-                        new_action = (random.randint(1, self.action))
+                        new_action = 1
                 # model chooses highest Q values to maintain stability
                 else:
-                    new_action = (random.randint(1, 10))    
+                    new_action = self.action        
             elif self.episode_step < 10 and explore_probability > np.random.rand():
                 # increment decay step
                 self.decay_step += 1
@@ -483,23 +485,22 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 # 
                 choices = (np.flatnonzero(self.model.select_action(self.state) == np.max(self.model.select_action(self.state))))
                 self.logger.info(choices)
-                # if hit rate is below 80%, a larger value will increase the hit rate
+                # if hit rate is below 90%, a larger value will increase the hit rate
                 if self.avg_hit < 0.90:
-                    if self.action < 8:               
-                        new_action = (random.randint((self.action + 1), (self.action + 3)))
+                    if self.action < 9:               
+                        new_action = (random.randint((self.action + 1), (self.action + 2)))
                     else:
                         new_action = (random.randint(self.action, 10))
                 # Make a random action (exploration)
-                # if hit rate is below 80%, a larger value will increase the hit rate
-                # if use rate is below 80%, a smaller value will increase the use rate
+                # if use rate is below 90%, a smaller value will increase the use rate
                 elif self.avg_use < 0.90:
-                    if self.action > 4:
-                        new_action = (random.randint((self.action - 3), (self.action - 1)))
+                    if self.action > 3:
+                        new_action = (random.randint((self.action - 2), (self.action - 1)))
                     else:
                         new_action = (random.randint(1, self.action))
                 # model chooses highest Q values to maintain stability
                 else:
-                    new_action = self.action 
+                    new_action = (random.randint(1, 10))
             else:
                 # Get action from Q-network (exploitation)
                 # Estimate the Qs values state
@@ -509,7 +510,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 # creates a copy of the array returned by self.model.select_action(self.state) and assigns it to the variable arr
                 arr = np.copy(self.model.select_action(self.state))
                 # check if start index is less than or equal to end index
-                if startindex <= endindex:
+                if startindex <= endindex and self.avg_hit >= 0.80:
                     # creates a copy of a portion of the arr array, ranging from the startindex to endindex + 1, and assigns it to the variable sub_arr
                     sub_arr = np.copy(arr[startindex:endindex+1])
                  
@@ -519,9 +520,15 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                         if sub_arr.size > 1:
                             # Check the parity of endindex and select even or odd indices accordingly
                             sub_arr2 = sub_arr[sub_arr % 2 != (endindex % 2)]
-                            # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
-                            max_indices_shifted = np.where(sub_arr2 == np.max(sub_arr2))[0] + startindex
+                            
+                            if sub_arr2.size > 0:
+                                # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
+                                max_indices_shifted = np.where(sub_arr2 == np.max(sub_arr2))[0] + startindex
                         
+                            else:
+                                # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
+                                max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0] + startindex
+                                
                         else:
                             # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
                             max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0] + startindex
@@ -531,23 +538,27 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                         self.logger.info(choices)
                         new_action = round(np.median(choices)+1)
                 
+                else:
+                    # creates a copy of a portion of the arr array, ranging from the start to endindex + 1, and assigns it to the variable sub_arr
+                    startindex = min((np.ceil(self.state[0]).astype(int)) - 1, 9)
+                    # check if the array is empty before performing the maximum operation
+                    if startindex < len(arr):
+                        sub_arr = np.copy(arr[startindex:])
+                        # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
+                        max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0] + startindex
+                        # converts the max_indices_shifted array to a Python list and assigns it to the variable choices
+
+                        choices = list(max_indices_shifted)
+                        self.logger.info(choices)
+                        new_action = round(np.median(choices)+1)
+                    
                     else:
-                        # creates a copy of a portion of the arr array, ranging from the start to endindex + 1, and assigns it to the variable sub_arr
-                        endindex = min((np.ceil(self.state[0]).astype(int)) - 1, 9)
-                        sub_arr = np.copy(arr[:endindex+1])
-
-                        # check if the array is empty before performing the maximum operation
-                        if sub_arr.size > 0:
-                            # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
-                            max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0]
-                            # converts the max_indices_shifted array to a Python list and assigns it to the variable choices
-
-                            choices = list(max_indices_shifted)
-                            self.logger.info(choices)
-                            new_action = round(np.median(choices)+1)
+                        new_action = self.action
                     
         else:
             new_action = self.action
 
         self.action = new_action
+
         self.barrier_reply_handler
+        
