@@ -54,7 +54,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.total_dur = 0  # running total of duration for flows removed from flow removed message
         self.hit = 0  # percentage of packets matched from table stats reply | outcome (reward) | feature (state)
         self.use = 0  # percentage of active flows from table stats reply | outcome (reward) | feature (state)
-        self.action = 6  # timeout value | feature (state)
+        self.action = 10  # timeout value | feature (state)
         self.counter = 0 # total number of packet in request(s)
         self.cache = TTLCache(maxsize=1000, ttl=20) # cache where each item is accessbile for 10s
         self.misses = 0 # flow table misses
@@ -112,7 +112,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
     def _monitor(self):
         self.logger.info("starting flow monitoring thread")
         
-        self.model.load("DDTtrained2")
+        self.model.load("DDTtrained")
 
         while True:
             
@@ -132,7 +132,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                     self.holder1 = 0
                     self.holder2 = 0
                     
-                    self.state = np.array([0, 6, 0, self.action, 0], dtype=np.float)
+                    self.state = np.array([0, 10, 0, self.action, 0], dtype=np.float)
 
                     while self.miniep < 4:
 
@@ -430,7 +430,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             self.state = np.select([self.state >= 10], [10], self.state)
             
             # It computes the start index by rounding the first element of self.state, subtracting 1, and taking the maximum of the result and 0. This ensures that the start index is at least 0
-            startindex = max(round(self.state[0]) - 1, 0)
+            startindex = max((np.floor(self.state[0]).astype(int)) - 1, 0)
             # computes the end index by rounding the second element of self.state, subtracting 1, and taking the minimum of the result and 9. This ensures that the end index is at most 9
             endindex = min(round(self.state[1]) - 1, 9)
             
@@ -441,19 +441,25 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             # creates a copy of the array returned by self.model.select_action(self.state) and assigns it to the variable arr
             arr = np.copy(self.model.select_action(self.state))
             # check if start index is less than or equal to end index
-            if startindex <= endindex:
+            if startindex <= endindex and self.avg_hit >= 0.80:
+                
                 # creates a copy of a portion of the arr array, ranging from the startindex to endindex + 1, and assigns it to the variable sub_arr
                 sub_arr = np.copy(arr[startindex:endindex+1])
-                 
                 # checks if the size of sub_arr is not empty.
                 if sub_arr.size > 0:
                     # checks if the size of sub_arr is greater than 1, which determines whether sub_arr2 is created based on parity.
                     if sub_arr.size > 1:
                         # Check the parity of endindex and select even or odd indices accordingly
                         sub_arr2 = sub_arr[sub_arr % 2 != (endindex % 2)]
-                        # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
-                        max_indices_shifted = np.where(sub_arr2 == np.max(sub_arr2))[0] + startindex
+                            
+                        if sub_arr2.size > 0:
+                            # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
+                            max_indices_shifted = np.where(sub_arr2 == np.max(sub_arr2))[0] + startindex
                         
+                        else:
+                            # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
+                            max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0] + startindex
+                                
                     else:
                         # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
                         max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0] + startindex
@@ -465,20 +471,23 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                 
             else:
                 # creates a copy of a portion of the arr array, ranging from the start to endindex + 1, and assigns it to the variable sub_arr
-                sub_arr = np.copy(arr[:endindex+1])
-                    
+                startindex = min((np.ceil(self.state[1]).astype(int)) - 1, 9)
                 # check if the array is empty before performing the maximum operation
-                if sub_arr.size > 0:
+                if startindex < len(arr):
+                    sub_arr = np.copy(arr[startindex:])
                     # finds the indices in sub_arr where the values are equal to max_value adding the startindex to each element and assigns the result to max_indices_shifted array
                     max_indices_shifted = np.where(sub_arr == np.max(sub_arr))[0] + startindex
                     # converts the max_indices_shifted array to a Python list and assigns it to the variable choices
-                    
+
                     choices = list(max_indices_shifted)
                     self.logger.info(choices)
                     new_action = round(np.median(choices)+1)
                     
                 else:
                     new_action = self.action
+                    
+        else:
+            new_action = self.action
 
         self.action = new_action
 
