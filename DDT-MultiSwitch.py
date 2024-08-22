@@ -34,9 +34,8 @@ import math
 import socket
 from _thread import *
 
-#  Soft Actor-Critic for
-from DiscreteSAC import Discrete_SAC_Agent
-import torch
+# DQN file
+from DQN import DQN
 
 #  visualize rewards for analysis
 import matplotlib.pyplot as plt
@@ -117,8 +116,7 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
         self.switch_uses = []  # holds individual table statistics
 
         # RL Algorithm initialization specific 
-        self.model = Discrete_SAC_Agent.SACAgent(STATE_DIM, ACTION_DIM)  # SACD initialization
-        #  self.replay_buffer = DiscreteSAC.utilities.ReplayBuffer(STATE_DIM, ACTION_DIM) Replay Buffer initialization
+        self.model = DQN()  # DQN initialization
         self.prev_state = np.array([None, None, None, None, None])  # placeholder for previous state
         self.state = np.array([None, None, None, None, None])  # placeholder for current state
         self.episode = 0  # episode counter initialization
@@ -323,7 +321,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
                     save_path = f'/home/thedeu2e/PycharmProjects/SDN-research/model_episode_{self.episode}.h5'
                     self.model.save(save_path)
                     self.logger.info("Intermediate save at episode %s to %s", self.episode, save_path)
-
                 # increment episode counter
                 self.episode += 1
             break
@@ -541,7 +538,6 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             else:
                 reward = 1
 
-
             # round values to nearest integer
             self.state = np.round(self.state, 1).astype(float)
 
@@ -551,23 +547,15 @@ class SimpleMonitor13(simple_switch_13.SimpleSwitch13):
             # set var equal timeout value's corresponding index so that the stored transition has proper information
             choice = self.action - 1
 
-            if not evaluation_episode:
-                self.model.train_on_transition(
-                    torch.tensor(self.prev_state, dtype=torch.float32),
-                    torch.tensor(choice, dtype=torch.long),
-                    torch.tensor(self.state, dtype=torch.float32),
-                    torch.tensor(reward, dtype=torch.float32),
-                    torch.tensor(done_bool, dtype=torch.float32)
-                )
-            else:
-                self.episode_reward += reward
+            self.model.store_transition(self.prev_state, choice, reward, self.state)
+
+            self.action = int(self.model.choose_action(self.state)) + 1
+
+            # train model
+            self.model.learn()
 
             # set previous state equal to current state for replay value in next iteration
             self.prev_state = self.state
-
-            new_action = (self.model.get_next_action(self.state, evaluation_episode)) + 1
-
-            self.action = new_action
 
             self.logger.info("RL process completed...")
 
