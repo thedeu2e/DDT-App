@@ -19,13 +19,11 @@ The code for this repository was developed and debugged within a virtual environ
 - Torch
 
 ## Files
-- Discrete SAC
 - DDT-MultiSwitch.py
 - coco_socket_collector.py
 - coco_socket_agent.py
 - prams.conf
 - testbedM.py
-- prams.conf
 
 ## Commands
 
