@@ -23,18 +23,8 @@ The code for this repository was developed and debugged within a virtual environ
 - coco_socket_collector.py
 - coco_socket_agent.py
 - prams.conf
-- testbedM.py
 
 ## Commands
-
-### Run
-
-```sh
-sudo -E /home/user/pathtomyproject/venv/bin/python3 /home/user/pathtomyproject/app.py
-sudo -E /home/thedeu2e/PycharmProjects/SDN-research/.venv/bin/python3.9 ./testbedM.py --controller=remote --topology=singular,5
-sudo -E /home/thedeu2e/PycharmProjects/SDN-research/.venv/bin/python3.9 ./testbedM.py --controller=remote --topology=linear,5
-sudo -E /home/thedeu2e/PycharmProjects/SDN-research/.venv/bin/python3.9 ./testbedM.py --controller=remote --topology=mesh,5
-```
 
 ### Checks
 ```sh
@@ -54,6 +44,7 @@ pkill -f ryu-manager
 - Incorporate Adaptive “Low-Cost Near Real-Time Counters in SDN” code to forecast stats
 - Consider adding additional data points (counters)
 - Test more complex topologies (Mesh, Fat Tree)
+- Incorporate flow classification
 
 ## Suggested Reading
 
@@ -63,17 +54,8 @@ pkill -f ryu-manager
 ## TODO
 - Replace hard-coded file paths with relevant file paths for your machine.
 
-## Running testbedM
-This script is based on [Mininet Flow Generator](https://github.com/stainleebakhla/mininet-flow-generator), please refer to repository. The following command will run this script:
-
-```sh
-sudo -E /home/user/pathtomyproject/venv/bin/python3 /home/user/pathtomyproject/app.py
-```
-
-If the script is already made executable then we can simply run the script as:
-```sh
-./testbedM.py
-```
+## Running testbed
+This research was conducted using a script based on [Mininet Flow Generator](https://github.com/stainleebakhla/mininet-flow-generator), please refer to repository. The following command will run this script:
 
 ### Command Line Arguments
 - `--controller=remote[,ip=<ip_address>]`: This argument starts Mininet with a remote controller for our SDN network. The location of the controller can be specified with `ip_address`. If no IP address is specified, then it is assumed that the controller is running locally, and the value `localhost` is assumed. If this argument is not supplied, then Mininet starts its own default controller instead.
