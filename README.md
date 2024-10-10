@@ -22,7 +22,6 @@ The code for this repository was developed and debugged within a virtual environ
 - DDT-MultiSwitch.py
 - coco_socket_collector.py
 - coco_socket_agent.py
-- prams.conf
 
 ## Commands
 
