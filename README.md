@@ -4,7 +4,7 @@ The code for this repository was developed and debugged within a virtual environ
 
 ## Software
 - **OS:** Ubuntu 24.04
-- **Python:** 3.9 (Ryu does not support higher versions at the time of this)
+- **Python:** 3.9 (Ryu does not support higher versions at the time of this research)
 - **Downgrade Dependencies:**
   - setuptools to 58.2.0
   - gunicorn to 20.1.0
