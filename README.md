@@ -55,22 +55,3 @@ pkill -f ryu-manager
 
 ## Running testbed
 This research was conducted using a script based on [Mininet Flow Generator](https://github.com/stainleebakhla/mininet-flow-generator), please refer to repository. The following command will run this script:
-
-### Command Line Arguments
-- `--controller=remote[,ip=<ip_address>]`: This argument starts Mininet with a remote controller for our SDN network. The location of the controller can be specified with `ip_address`. If no IP address is specified, then it is assumed that the controller is running locally, and the value `localhost` is assumed. If this argument is not supplied, then Mininet starts its own default controller instead.
-- `--topo=<topo_name>[,nodes]`: This argument specifies the topology with which Mininet should start. Available values are `linear`, `mesh`, and `fat_tree` topologies. The nodes specify the number of nodes to be spawned in that particular topology. If not specified, it assumes the value of 2. If this argument is not specified, then it assumes the value of linear topology with 2 nodes.
-- `--debug`: If specified, this argument starts the python script in debug mode. It tries to connect to a locally available PyCharm IDE. If not specified, the script starts normally without opening any debug ports.
-
-Once Mininet is started, it shows up the following prompt:
-
-```sh
-GEN/CLI/QUIT>_
-```
-
-### Commands
-
-- **GEN**: This is the main purpose of the script. This command generates flows between two hosts randomly selected. This command takes 3 inputs: experiment time, number of elephant flows, and number of mice flows, and creates a schedule of those many elephant and mice flows selected at random and then executes them using `MGEN`. For each flow, two random hosts from the network are selected, one as a server and the other as a client. The server command is run at the host selected as the server, and the client command is run at the host selected as the client. This generates a traffic flow between two nodes in the network, which is picked up by ONOS for analysis. Once the flows have been generated, the script goes to sleep for the remaining duration of the experiment, to not disturb any of the ongoing flows. At the end of the experiment, the script starts up the cleaning process by removing all `MGEN` processes it had started. If there are any existing flows, these are stopped and killed immediately. However, care has been taken such that all flows generated with this command terminate well before the duration of the experiment.
-- **CLI**: This command starts the Mininet CLI. Here you can enter commands, which are run by Mininet.
-- **QUIT**: The command exits the script, shutting down Mininet and all the components, like switches, and links that it had started.
-
-sudo rm -rf model_episode_0.h5
